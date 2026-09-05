@@ -77,10 +77,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <div>
               <h1 className="font-bold text-base text-slate-100 leading-none">
-                Aura AI
+                Kian AI
               </h1>
               <span className="text-[10px] font-semibold tracking-wider text-cyan-400 uppercase">
-                Free Universal AI
+                Free open-weight models
               </span>
             </div>
           </div>

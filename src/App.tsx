@@ -7,10 +7,14 @@ import { SettingsModal } from './components/SettingsModal';
 import { DeployModal } from './components/DeployModal';
 import type { AIModel, Message, ChatSession, AppSettings } from './types';
 import { DEFAULT_MODELS, SYSTEM_PERSONAS } from './config/constants';
+import { STORAGE_KEY_SESSIONS, STORAGE_KEY_SETTINGS, migrateLegacyKeys } from './config/storage';
 import { fetchOpenRouterFreeModels, normalizeModelId, sendChatMessage } from './services/aiService';
 
-const STORAGE_KEY_SESSIONS = 'aura_ai_sessions_v1';
-const STORAGE_KEY_SETTINGS = 'aura_ai_settings_v1';
+// Runs once at import, before any state reads localStorage, so chats saved by
+// the previous build under the old key names are carried across the rename.
+if (typeof localStorage !== 'undefined') {
+  migrateLegacyKeys(localStorage);
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   activeModelId: DEFAULT_MODELS[0].id,
@@ -57,12 +61,12 @@ export const App: React.FC = () => {
     // Default welcome chat session
     const defaultSession: ChatSession = {
       id: `session_${Date.now()}`,
-      title: 'Welcome to Aura AI',
+      title: 'Welcome to Kian AI',
       messages: [
         {
           id: `msg_welcome`,
           role: 'assistant',
-          content: `👋 **Welcome to Aura AI**
+          content: `👋 **Welcome to Kian AI**
 
 A chat client for free, open-weight models served by **OpenRouter** and **Groq**.
 

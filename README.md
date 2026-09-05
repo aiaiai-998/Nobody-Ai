@@ -1,4 +1,4 @@
-# 🤖 Aura AI — a chat client for free open-weight models
+# 🤖 Kian AI — a chat client for free open-weight models
 
 A React + TypeScript chat UI that talks to open-weight models through
 [OpenRouter](https://openrouter.ai) and [Groq](https://console.groq.com). Both
@@ -9,7 +9,7 @@ providers issue free API keys.
 ## ⚠️ Read this first: it needs a key
 
 There is no way to run a real language model in a static web app without either
-a key or a multi-gigabyte in-browser model download. Aura AI does **not** fake
+a key or a multi-gigabyte in-browser model download. Kian AI does **not** fake
 it:
 
 - With a key → you get genuine streaming responses from the model you picked.

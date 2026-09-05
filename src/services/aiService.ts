@@ -286,7 +286,7 @@ export async function sendChatMessage(
   if (route.provider === 'openrouter') {
     const referer = getReferer();
     if (referer) headers['HTTP-Referer'] = referer;
-    headers['X-Title'] = 'Aura AI';
+    headers['X-Title'] = 'Kian AI';
   }
 
   const payload: Record<string, unknown> = {

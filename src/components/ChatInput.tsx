@@ -175,7 +175,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       </div>
 
       <p className="text-[11px] text-center text-slate-500 mt-2">
-        Powered by Open-Weight AI Models & Browser Web Engines • Free for everyone
+        Kian AI routes to free open-weight models via OpenRouter and Groq
       </p>
     </div>
   );

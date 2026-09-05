@@ -98,7 +98,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isStreaming }
           <div className="flex items-center justify-between mb-1.5">
             <div className="flex items-center gap-2">
               <span className="font-semibold text-sm text-slate-200">
-                {isUser ? 'You' : 'Free AI Assistant'}
+                {isUser ? 'You' : 'Kian AI'}
               </span>
               {message.model && !isUser && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 font-mono">
