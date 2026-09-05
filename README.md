@@ -23,6 +23,61 @@ Get a free key: [OpenRouter keys](https://openrouter.ai/keys) ·
 
 ---
 
+## 💸 "Free" means $0, not unlimited
+
+No cost per token, no credit card, no subscription. But every free tier is
+**request-limited**, and the limits belong to whoever owns the API key — not to
+Kian AI.
+
+| Provider | Free tier ceiling | Notes |
+|---|---|---|
+| **OpenRouter** | **50 requests/day**, 20 requests/minute | Rises to **1,000/day** permanently once the account has ever bought $10 of credits. The 20/min cap never changes. |
+| **Groq** | ~30 requests/minute + a per-model daily cap | Chat models sit around **1,000 requests/day**; some entry-level models are higher. Varies by model — check the console for live values. |
+
+Things worth knowing before you rely on it:
+
+- **The limits are per API key, and every visitor brings their own.** Kian AI
+  stores keys in the visitor's browser, so your deployment has no shared quota
+  to exhaust — but it also means each user has to get their own key.
+- **Failed requests can still count against the daily quota** on OpenRouter, so
+  a retry loop burns allowance. Kian AI surfaces the 429 instead of retrying.
+- **Free model rosters rotate.** A model that is `:free` today may not be next
+  month. That is why the model list is fetched live rather than hardcoded.
+- **Truly unlimited requires paying** — a paid (non-`:free`) model on either
+  provider, billed per token.
+
+---
+
+## 📱 It's a website, not an app
+
+There is nothing to download or install. Deploy it to any static host and
+anyone opens it in a browser.
+
+**Works on:** Windows / macOS / Linux desktop, iPhone, iPad, Android — anything
+with a current Chrome, Edge, Firefox or Safari. The layout is responsive down
+to phone widths.
+
+**Caveats, all from actual feature detection in the code:**
+
+- 🎤 **Voice input** needs the Web Speech API. Chrome, Edge and Safari
+  (14.1+/iOS 14.5+) support it. **Firefox ships it disabled behind an
+  `about:config` flag**, so for most Firefox users the button will report
+  unsupported rather than fail silently.
+- 🔒 **Voice input also requires HTTPS** (or `localhost`). Browsers block the
+  microphone on plain HTTP, so deploy behind TLS — every free host above gives
+  you that by default.
+- 🔊 **Read-aloud** needs `speechSynthesis`, which is near-universal.
+- No GPU, no WebGPU and no model download are required — inference happens on
+  the provider's servers.
+- Reaching a real model needs network access. The **Scripted Offline Demo** is
+  the only mode that works without it, and it is not an AI.
+
+**Not currently installable:** there is no web app manifest or service worker,
+so browsers won't offer "Install app". It is a website. Adding PWA support is a
+small change if you want it to install to a home screen.
+
+---
+
 ## 🌟 Features
 
 - **Streaming responses** — token-by-token, with a working **Stop** button that
