@@ -18,7 +18,13 @@ import {
 } from 'lucide-react';
 import type { Attachment } from '../types';
 import { QUICK_PROMPTS } from '../config/constants';
-import { formatBytes, readFileAsAttachment } from '../services/attachments';
+import {
+  MAX_DOCUMENTS_PER_MESSAGE,
+  MAX_IMAGES_PER_MESSAGE,
+  formatBytes,
+  isImageMime,
+  readFileAsAttachment,
+} from '../services/attachments';
 
 interface ChatInputProps {
   onSendMessage: (text: string, attachments: Attachment[]) => void;
@@ -40,6 +46,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isReading, setIsReading] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -53,9 +60,40 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
   const addFiles = async (files: File[]) => {
     if (files.length === 0) return;
+
+    // Enforce the per-message caps here so the user is told up front, rather
+    // than having the provider reject the whole request later.
+    const incomingImages = files.filter((f) => isImageMime(f.type));
+    const incomingDocs = files.filter((f) => !isImageMime(f.type));
+
+    const roomForImages = Math.max(
+      0,
+      MAX_IMAGES_PER_MESSAGE - attachments.filter((a) => a.kind === 'image').length
+    );
+    const roomForDocs = Math.max(
+      0,
+      MAX_DOCUMENTS_PER_MESSAGE - attachments.filter((a) => a.kind === 'document').length
+    );
+
+    const accepted = [
+      ...incomingImages.slice(0, roomForImages),
+      ...incomingDocs.slice(0, roomForDocs),
+    ];
+    const skipped =
+      Math.max(0, incomingImages.length - roomForImages) +
+      Math.max(0, incomingDocs.length - roomForDocs);
+
+    setNotice(
+      skipped > 0
+        ? `Up to ${MAX_IMAGES_PER_MESSAGE} images and ${MAX_DOCUMENTS_PER_MESSAGE} documents per message — ${skipped} file${skipped === 1 ? '' : 's'} not added. Send this one, then attach the rest in a follow-up.`
+        : null
+    );
+
+    if (accepted.length === 0) return;
+
     setIsReading(true);
     try {
-      const next = await Promise.all(files.map(readFileAsAttachment));
+      const next = await Promise.all(accepted.map(readFileAsAttachment));
       setAttachments((prev) => [...prev, ...next]);
     } finally {
       setIsReading(false);
@@ -76,6 +114,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     onSendMessage(text, attachments);
     setPrompt('');
     setAttachments([]);
+    setNotice(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -182,6 +221,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             : 'border-slate-800 focus-within:border-cyan-500/50'
         }`}
       >
+        {/* Attachment limit notice */}
+        {notice && (
+          <div className="mx-2 mt-1 mb-1 flex items-start gap-2 px-2.5 py-1.5 rounded-lg bg-amber-950/40 border border-amber-800/50 text-[11px] text-amber-300">
+            <AlertCircle size={13} className="shrink-0 mt-0.5" />
+            <span>{notice}</span>
+          </div>
+        )}
+
         {/* Pending attachments */}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-2 pt-1 pb-2">

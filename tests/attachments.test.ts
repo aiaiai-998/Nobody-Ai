@@ -9,8 +9,11 @@ import {
   buildMessageContent,
   inlineDocumentText,
   messageHasImages,
+  pruneOldImages,
 } from '../src/services/aiService';
 import {
+  MAX_DOCUMENTS_PER_MESSAGE,
+  MAX_IMAGES_PER_MESSAGE,
   MAX_IMAGE_BYTES,
   formatBytes,
   isImageMime,
@@ -172,4 +175,68 @@ test('pdfItemsToText collapses whitespace and ignores non-text items', () => {
     'Hello world'
   );
   assert.equal(pdfItemsToText([]), '');
+});
+
+/* ---------- attachment count caps ---------- */
+
+function imageAttachment(id: string): Attachment {
+  return {
+    id,
+    kind: 'image',
+    name: `${id}.png`,
+    mimeType: 'image/png',
+    sizeBytes: 1024,
+    dataUrl: `data:image/png;base64,${id}`,
+  };
+}
+
+test('per-message caps stay under the provider limit of 20 images + documents', () => {
+  assert.equal(MAX_IMAGES_PER_MESSAGE, 10);
+  assert.equal(MAX_DOCUMENTS_PER_MESSAGE, 5);
+  assert.ok(
+    MAX_IMAGES_PER_MESSAGE + MAX_DOCUMENTS_PER_MESSAGE < 20,
+    'OpenRouter rejects a request above 20 combined images and documents'
+  );
+});
+
+test('pruneOldImages leaves a message alone when under the request cap', () => {
+  const messages = [userMessage('a', [imageAttachment('i1'), imageAttachment('i2')])];
+  assert.deepEqual(pruneOldImages(messages), messages);
+});
+
+test('pruneOldImages keeps the most recent images and drops the oldest', () => {
+  const messages = [
+    userMessage('oldest', [imageAttachment('old1'), imageAttachment('old2')]),
+    userMessage('newest', [imageAttachment('new1'), imageAttachment('new2')]),
+  ];
+
+  const pruned = pruneOldImages(messages, 2);
+
+  // Oldest message loses both images, newest keeps both.
+  assert.deepEqual(pruned[0].attachments, []);
+  assert.deepEqual(
+    pruned[1].attachments?.map((a) => a.id),
+    ['new1', 'new2']
+  );
+  // Content is untouched; only the image parts are trimmed.
+  assert.equal(pruned[0].content, 'oldest');
+});
+
+test('pruneOldImages never removes document attachments', () => {
+  const messages = [
+    userMessage('doc', [DOC, imageAttachment('old')]),
+    userMessage('img', [imageAttachment('new')]),
+  ];
+
+  const pruned = pruneOldImages(messages, 1);
+
+  assert.deepEqual(
+    pruned[0].attachments?.map((a) => a.id),
+    ['doc1'],
+    'the document survives even though its image was dropped'
+  );
+  assert.deepEqual(
+    pruned[1].attachments?.map((a) => a.id),
+    ['new']
+  );
 });

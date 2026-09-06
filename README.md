@@ -66,6 +66,15 @@ Things worth knowing before you rely on it:
 
 ---
 
+## 🚦 First run
+
+A visitor with no key gets a setup screen instead of a chat that fails: pick a
+provider, open the key page, paste the key, done. It also reopens automatically
+if they try to send a message with no key configured. "Skip" is always
+available and the offline demo works without one.
+
+---
+
 ## 📎 Attachments
 
 Click the paperclip, drag a file onto the box, or paste an image from the
@@ -77,10 +86,26 @@ clipboard.
 | **PDFs** | Text is extracted in your browser with pdf.js and folded into the prompt. Nothing is uploaded anywhere except to the model you chose. |
 | **Text files** (.txt, .md, .csv, .json, .html) | Read directly and inlined. |
 
-Limits: images 4 MB, documents 15 MB, and attached text is capped at 24,000
-characters so one huge file cannot blow the context window. A scanned
-image-only PDF has no text layer — Kian says so and suggests attaching it as an
-image instead.
+### Limits
+
+| | Per message | Per file |
+|---|---|---|
+| **Images** | **10** | 4 MB |
+| **PDFs / documents** | **5** | 15 MB |
+
+Those counts are not arbitrary: OpenRouter rejects a request outright above
+**20 images and documents combined** (`too many images and documents: 27 + 0 >
+20`), so 10 + 5 leaves headroom. Try to add more and the input box tells you
+how many were skipped instead of letting the provider 400 the whole request.
+
+Images also stay in the history sent with every follow-up, so a long
+conversation accumulates them. The request builder trims to the **10 most
+recent** image parts and keeps documents, so you never trip the provider cap
+mid-conversation.
+
+Attached text is capped at 24,000 characters, shared across all documents, so
+one huge PDF cannot blow the context window. A scanned image-only PDF has no
+text layer — Kian says so and suggests attaching it as an image instead.
 
 Vision depends on the model, not the app: the live OpenRouter catalog reports
 each model's `input_modalities`, and the curated presets flag the ones known to
@@ -158,7 +183,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 48 tests against the real service modules with a stubbed
+`npm test` runs 53 tests against the real service modules with a stubbed
 `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration

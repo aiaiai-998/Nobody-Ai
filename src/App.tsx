@@ -5,6 +5,7 @@ import { ChatMessage } from './components/ChatMessage';
 import { ChatInput } from './components/ChatInput';
 import { SettingsModal } from './components/SettingsModal';
 import { DeployModal } from './components/DeployModal';
+import { SetupModal } from './components/SetupModal';
 import type { AIModel, Attachment, Message, ChatSession, AppSettings } from './types';
 import { DEFAULT_MODELS, SYSTEM_PERSONAS } from './config/constants';
 import { STORAGE_KEY_SESSIONS, STORAGE_KEY_SETTINGS, migrateLegacyKeys } from './config/storage';
@@ -101,6 +102,10 @@ Your keys and chat history stay in this browser's local storage.`,
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
   const [liveModels, setLiveModels] = useState<AIModel[]>([]);
+  // First-run setup: only prompt when there is genuinely no key to work with.
+  const [isSetupOpen, setIsSetupOpen] = useState<boolean>(
+    () => !settings.openRouterApiKey?.trim() && !settings.groqApiKey?.trim()
+  );
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -222,6 +227,14 @@ Your keys and chat history stay in this browser's local storage.`,
     const targetSession = activeSession;
     if (!targetSession) return;
     const sessionId = targetSession.id;
+
+    // No key and not the offline demo: guide the user instead of failing.
+    const wantsRealModel = !normalizeModelId(settings.activeModelId).startsWith('offline/');
+    const hasAnyKey = Boolean(settings.openRouterApiKey?.trim() || settings.groqApiKey?.trim());
+    if (wantsRealModel && !hasAnyKey) {
+      setIsSetupOpen(true);
+      return;
+    }
 
     const activeModelObj = models.find((m) => m.id === settings.activeModelId) || models[0];
     const activePersonaObj = SYSTEM_PERSONAS.find((p) => p.id === settings.activePersonaId) || SYSTEM_PERSONAS[0];
@@ -416,6 +429,16 @@ Your keys and chat history stay in this browser's local storage.`,
       <DeployModal
         isOpen={isDeployModalOpen}
         onClose={() => setIsDeployModalOpen(false)}
+      />
+
+      <SetupModal
+        isOpen={isSetupOpen}
+        openRouterApiKey={settings.openRouterApiKey}
+        groqApiKey={settings.groqApiKey}
+        onSaveOpenRouterKey={(key) => handleUpdateSettings({ openRouterApiKey: key })}
+        onSaveGroqKey={(key) => handleUpdateSettings({ groqApiKey: key })}
+        onDone={() => setIsSetupOpen(false)}
+        onSkip={() => setIsSetupOpen(false)}
       />
     </div>
   );

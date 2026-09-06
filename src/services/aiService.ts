@@ -39,6 +39,13 @@ const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
  */
 export const MAX_ATTACHMENT_TEXT_CHARS = 24_000;
 
+/**
+ * Images stay in the history sent with every follow-up, so a long conversation
+ * accumulates them and can blow the provider's per-request cap. Keep the most
+ * recent ones and silently drop the oldest past this limit.
+ */
+export const MAX_IMAGE_PARTS_PER_REQUEST = 10;
+
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   openrouter: 'OpenRouter',
   groq: 'Groq',
@@ -244,6 +251,32 @@ export function buildMessageContent(
       image_url: { url: a.dataUrl as string },
     })),
   ];
+}
+
+/** Drop the oldest image attachments once the request would carry too many. */
+export function pruneOldImages(
+  messages: Message[],
+  maxImageParts: number = MAX_IMAGE_PARTS_PER_REQUEST
+): Message[] {
+  let budget = maxImageParts;
+  const keep = new Set<string>();
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    for (const a of messages[i].attachments ?? []) {
+      if (a.kind !== 'image' || !a.dataUrl) continue;
+      if (budget > 0) {
+        keep.add(a.id);
+        budget--;
+      }
+    }
+  }
+
+  return messages.map((m) => {
+    const atts = m.attachments;
+    if (!atts || atts.length === 0) return m;
+    const filtered = atts.filter((a) => a.kind !== 'image' || keep.has(a.id));
+    return filtered.length === atts.length ? m : { ...m, attachments: filtered };
+  });
 }
 
 export function messageHasImages(message: Message): boolean {
@@ -522,7 +555,10 @@ export async function sendChatMessage(
     return;
   }
 
-  const needsImages = messages.some(messageHasImages);
+  // Trim history so accumulated images cannot exceed the provider's cap.
+  const outbound = pruneOldImages(messages);
+
+  const needsImages = outbound.some(messageHasImages);
   const chain = buildModelChain(requested, settings, { knownModels, preferVision: needsImages });
 
   if (chain.length === 0) {
@@ -580,7 +616,7 @@ export async function sendChatMessage(
 
     const result = await attemptModel(
       modelId,
-      messages,
+      outbound,
       systemPrompt,
       settings,
       callbacks.onChunk,

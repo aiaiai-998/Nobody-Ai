@@ -4,6 +4,15 @@ import type { Attachment } from '../types';
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024;
 
+/**
+ * OpenRouter rejects a request outright once it carries more than 20 images and
+ * documents combined ("too many images and documents: 27 + 0 > 20"). These
+ * per-message caps sit well under that, and leave room for the same files
+ * reappearing in conversation history.
+ */
+export const MAX_IMAGES_PER_MESSAGE = 10;
+export const MAX_DOCUMENTS_PER_MESSAGE = 5;
+
 const IMAGE_MIME_PREFIX = 'image/';
 const PDF_MIME = 'application/pdf';
 const PLAIN_TEXT_MIMES = new Set([

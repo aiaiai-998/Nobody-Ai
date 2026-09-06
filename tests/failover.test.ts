@@ -287,3 +287,51 @@ test('auto mode routes an image to the vision model and sends it as a content ar
   assert.deepEqual(parts[1].image_url, { url: 'data:image/png;base64,AAAA' });
   assert.equal(rec.finished, 'a cat');
 });
+
+test('a long image history is trimmed before it reaches the provider', async () => {
+  const rec = recorder();
+  let body: Record<string, unknown> = {};
+
+  const img = (id: string) => ({
+    id,
+    kind: 'image' as const,
+    name: `${id}.png`,
+    mimeType: 'image/png',
+    sizeBytes: 1024,
+    dataUrl: `data:image/png;base64,${id}`,
+  });
+
+  // Six messages, two images each = 12 image parts, over the cap of 10.
+  const history: Message[] = Array.from({ length: 6 }, (_, i) => ({
+    id: `m${i}`,
+    role: 'user' as const,
+    content: `turn ${i}`,
+    timestamp: i,
+    attachments: [img(`a${i}x`), img(`a${i}y`)],
+  }));
+
+  await withFetch(
+    async (_input, init) => {
+      body = JSON.parse(String(init?.body));
+      return sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n']);
+    },
+    () =>
+      sendChatMessage(history, 'You are helpful.', { ...BOTH_KEYS, activeModelId: AUTO_MODEL_ID }, rec.callbacks, {
+        knownModels: CATALOG,
+      })
+  );
+
+  const sent = body.messages as Array<{ content: unknown }>;
+  const imageParts = sent
+    .filter((m) => Array.isArray(m.content))
+    .flatMap((m) => m.content as Array<{ type: string }>)
+    .filter((part) => part.type === 'image_url');
+
+  assert.equal(imageParts.length, 10, 'trimmed to the per-request cap');
+
+  // The newest turns keep their images; the oldest lose them.
+  const last = sent[sent.length - 1].content as Array<{ type: string }>;
+  assert.equal(last.filter((p) => p.type === 'image_url').length, 2);
+  const first = sent[1].content;
+  assert.equal(typeof first, 'string', 'oldest message degraded to plain text');
+});
