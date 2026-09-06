@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import handler, { resolveUpstream } from '../api/chat';
+import handler, { clientIp, createLimiter, defaultLimits, resolveUpstream } from '../api/chat';
 import { buildModelChain, hasUsableCredential, sendChatMessage } from '../src/services/aiService';
 import { BASE_SETTINGS, HISTORY, jsonResponse, recorder, sseResponse, withFetch } from './helpers';
 
@@ -199,6 +199,35 @@ describe('proxy routing (client side)', () => {
   });
 });
 
+function makeRes() {
+  const chunks: string[] = [];
+  const headers: Record<string, string> = {};
+  return {
+    chunks,
+    headers,
+    body: '',
+    // Both Node code paths funnel here: writeHead for the streaming case and
+    // a direct assignment for the early-return cases.
+    statusCode: 200 as number,
+    writeHead(status: number, h: Record<string, string>) {
+      this.statusCode = status;
+      Object.assign(headers, h);
+    },
+    setHeader(name: string, value: string) {
+      headers[name] = value;
+    },
+    write(chunk: Uint8Array | string) {
+      chunks.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    },
+    end(chunk?: Uint8Array | string) {
+      if (chunk !== undefined) {
+        this.body = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
+      }
+    },
+  };
+}
+
 /**
  * The handler is the actual deployed artifact. Drive it with a stub request and
  * a recorder standing in for the Node response, so the relay path is real.
@@ -215,34 +244,6 @@ describe('handler (deployed function)', () => {
     process.env.GEMINI_API_KEY = KEY;
   });
 
-  function makeRes() {
-    const chunks: string[] = [];
-    const headers: Record<string, string> = {};
-    return {
-      chunks,
-      headers,
-      body: '',
-      // Both Node code paths funnel here: writeHead for the streaming case and
-      // a direct assignment for the early-return cases.
-      statusCode: 200 as number,
-      writeHead(status: number, h: Record<string, string>) {
-        this.statusCode = status;
-        Object.assign(headers, h);
-      },
-      setHeader(name: string, value: string) {
-        headers[name] = value;
-      },
-      write(chunk: Uint8Array | string) {
-        chunks.push(typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk));
-        return true;
-      },
-      end(chunk?: Uint8Array | string) {
-        if (chunk !== undefined) {
-          this.body = typeof chunk === 'string' ? chunk : new TextDecoder().decode(chunk);
-        }
-      },
-    };
-  }
 
   afterEach(() => {
     if (savedKey === undefined) delete process.env.GEMINI_API_KEY;
@@ -377,5 +378,91 @@ describe('hasUsableCredential (the setup gate)', () => {
   it('ignores whitespace-only values', () => {
     assert.equal(hasUsableCredential({ ...BASE_SETTINGS, geminiApiKey: '   ' }), false);
     assert.equal(hasUsableCredential({ ...BASE_SETTINGS, proxyUrl: '   ' }), false);
+  });
+});
+
+describe('rate limiting', () => {
+  it('allows requests up to the per-minute limit, then blocks', () => {
+    const lim = createLimiter({ perMinute: 3, perDay: 100, perDayGlobal: 100 });
+    const t = 1_000_000;
+    assert.equal(lim.check('1.2.3.4', t).ok, true);
+    assert.equal(lim.check('1.2.3.4', t + 1).ok, true);
+    assert.equal(lim.check('1.2.3.4', t + 2).ok, true);
+    const blocked = lim.check('1.2.3.4', t + 3);
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.reason, /per minute/);
+    assert.ok(blocked.retryAfterSeconds > 0);
+  });
+
+  it('lets the visitor back in once the minute rolls over', () => {
+    const lim = createLimiter({ perMinute: 1, perDay: 100, perDayGlobal: 100 });
+    const t = 5_000_000;
+    assert.equal(lim.check('1.2.3.4', t).ok, true);
+    assert.equal(lim.check('1.2.3.4', t + 30_000).ok, false);
+    assert.equal(lim.check('1.2.3.4', t + 61_000).ok, true);
+  });
+
+  it('counts visitors separately but shares the global budget', () => {
+    const lim = createLimiter({ perMinute: 10, perDay: 10, perDayGlobal: 3 });
+    const t = 9_000_000;
+    assert.equal(lim.check('a', t).ok, true);
+    assert.equal(lim.check('b', t).ok, true);
+    assert.equal(lim.check('c', t).ok, true);
+    const blocked = lim.check('d', t);
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.reason, /this service/);
+  });
+
+  it('enforces a per-visitor daily cap independently of the minute cap', () => {
+    const lim = createLimiter({ perMinute: 100, perDay: 2, perDayGlobal: 1000 });
+    const t = 20_000_000;
+    assert.equal(lim.check('a', t).ok, true);
+    assert.equal(lim.check('a', t + 100_000).ok, true);
+    const blocked = lim.check('a', t + 200_000);
+    assert.equal(blocked.ok, false);
+    assert.match(blocked.reason, /daily limit/);
+  });
+
+  it('reads limits from the environment with safe defaults', () => {
+    assert.deepEqual(defaultLimits({}), { perMinute: 20, perDay: 200, perDayGlobal: 2000 });
+    assert.deepEqual(defaultLimits({ RATE_LIMIT_RPM: '5', RATE_LIMIT_PER_DAY: '50', RATE_LIMIT_GLOBAL_PER_DAY: '500' }), {
+      perMinute: 5,
+      perDay: 50,
+      perDayGlobal: 500,
+    });
+    // Junk must not disable the limit.
+    assert.equal(defaultLimits({ RATE_LIMIT_RPM: 'abc' }).perMinute, 20);
+    assert.equal(defaultLimits({ RATE_LIMIT_RPM: '-1' }).perMinute, 20);
+  });
+
+  it('identifies the visitor from the first proxy hop', () => {
+    assert.equal(clientIp({ headers: { 'x-forwarded-for': '9.9.9.9, 10.0.0.1' } }), '9.9.9.9');
+    assert.equal(clientIp({ headers: { 'x-forwarded-for': ['8.8.8.8', '10.0.0.1'] } }), '8.8.8.8');
+    assert.equal(clientIp({ headers: {}, socket: { remoteAddress: '127.0.0.1' } }), '127.0.0.1');
+    assert.equal(clientIp({}), 'unknown');
+  });
+
+  it('the handler returns 429 with Retry-After once a visitor exceeds the limit', async () => {
+    Object.defineProperty(globalThis, 'fetch', {
+      value: async () => sseResponse(['data: {"candidates":[{"content":{"parts":[{"text":"x"}],"role":"model"}}]}\n\n']),
+      writable: true,
+      configurable: true,
+    });
+    process.env.GEMINI_API_KEY = 'AIza-server-side';
+
+    // Default limit is 20 per minute; use a private IP so no other test collides.
+    const hdrs = { 'x-forwarded-for': '203.0.113.77' };
+    let last: { code: number; retry: string; body: string } = { code: 0, retry: '', body: '' };
+    for (let i = 0; i < 21; i++) {
+      const res = makeRes();
+      await handler(
+        { method: 'POST', headers: hdrs, body: { provider: 'gemini', model: 'gemini-2.5-flash', payload: {} } },
+        res
+      );
+      last = { code: res.statusCode, retry: res.headers['Retry-After'] ?? '', body: res.body };
+    }
+    assert.equal(last.code, 429);
+    assert.ok(Number(last.retry) > 0, 'must tell the client when to come back');
+    assert.match(last.body, /per minute/);
   });
 });

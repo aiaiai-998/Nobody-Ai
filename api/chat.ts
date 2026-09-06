@@ -103,10 +103,108 @@ export function resolveUpstream(
   };
 }
 
+/* ---------- rate limiting ---------- */
+
+export interface RateLimits {
+  /** Requests per minute from a single visitor. */
+  perMinute: number;
+  /** Requests per day from a single visitor. */
+  perDay: number;
+  /** Requests per day across everyone — the "my bill cannot explode" guard. */
+  perDayGlobal: number;
+}
+
+export interface RateVerdict {
+  ok: boolean;
+  retryAfterSeconds: number;
+  reason: string;
+}
+
+export function defaultLimits(env: Env): RateLimits {
+  const num = (key: string, fallback: number) => {
+    const raw = Number(env[key]);
+    return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+  };
+  return {
+    perMinute: num('RATE_LIMIT_RPM', 20),
+    perDay: num('RATE_LIMIT_PER_DAY', 200),
+    perDayGlobal: num('RATE_LIMIT_GLOBAL_PER_DAY', 2000),
+  };
+}
+
+const MINUTE = 60_000;
+const DAY = 86_400_000;
+
+/**
+ * Fixed-window counters held in memory. Honest limitation: on a serverless host
+ * each instance has its own counters and they reset on cold start, so this is a
+ * deterrent against a casual script rather than a hard guarantee. For a real
+ * cap you want a shared store (Upstash, Redis) keyed the same way.
+ */
+export function createLimiter(limits: RateLimits) {
+  const buckets = new Map<string, { minute: number[]; day: number[] }>();
+  const globalDay: number[] = [];
+
+  return {
+    check(ip: string, now: number): RateVerdict {
+      const prune = (arr: number[], window: number) => {
+        while (arr.length > 0 && now - arr[0] > window) arr.shift();
+      };
+
+      prune(globalDay, DAY);
+      if (globalDay.length >= limits.perDayGlobal) {
+        return {
+          ok: false,
+          retryAfterSeconds: Math.ceil((globalDay[0] + DAY - now) / 1000),
+          reason: 'daily limit reached for this service',
+        };
+      }
+
+      let entry = buckets.get(ip);
+      if (!entry) {
+        entry = { minute: [], day: [] };
+        buckets.set(ip, entry);
+      }
+      prune(entry.minute, MINUTE);
+      prune(entry.day, DAY);
+
+      if (entry.minute.length >= limits.perMinute) {
+        return {
+          ok: false,
+          retryAfterSeconds: Math.ceil((entry.minute[0] + MINUTE - now) / 1000),
+          reason: 'too many requests per minute',
+        };
+      }
+      if (entry.day.length >= limits.perDay) {
+        return {
+          ok: false,
+          retryAfterSeconds: Math.ceil((entry.day[0] + DAY - now) / 1000),
+          reason: 'daily limit reached',
+        };
+      }
+
+      entry.minute.push(now);
+      entry.day.push(now);
+      globalDay.push(now);
+      return { ok: true, retryAfterSeconds: 0, reason: '' };
+    },
+  };
+}
+
+/** First hop of X-Forwarded-For, falling back to the socket address. */
+export function clientIp(req: { headers?: Record<string, string | string[] | undefined>; socket?: { remoteAddress?: string } }): string {
+  const fwd = req.headers?.['x-forwarded-for'];
+  const first = Array.isArray(fwd) ? fwd[0] : fwd;
+  if (typeof first === 'string' && first.trim()) return first.split(',')[0].trim();
+  return req.socket?.remoteAddress ?? 'unknown';
+}
+
 /** Minimal structural types so this needs no host-specific dependency. */
 interface Req {
   method?: string;
   body?: unknown;
+  headers?: Record<string, string | string[] | undefined>;
+  socket?: { remoteAddress?: string };
 }
 interface Res {
   statusCode?: number;
@@ -116,10 +214,21 @@ interface Res {
   end(chunk?: Uint8Array | string): unknown;
 }
 
+const limiter = createLimiter(defaultLimits(process.env));
+
 export default async function handler(req: Req, res: Res): Promise<void> {
   if (req.method && req.method.toUpperCase() !== 'POST') {
     res.statusCode = 405;
     res.end(JSON.stringify({ error: { message: 'POST only.' } }));
+    return;
+  }
+
+  const verdict = limiter.check(clientIp(req), Date.now());
+  if (!verdict.ok) {
+    res.statusCode = 429;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Retry-After', String(verdict.retryAfterSeconds));
+    res.end(JSON.stringify({ error: { message: `Slow down: ${verdict.reason}. Try again in ${verdict.retryAfterSeconds}s.` } }));
     return;
   }
 

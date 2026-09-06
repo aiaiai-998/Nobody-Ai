@@ -28,7 +28,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   openRouterApiKey: '',
   groqApiKey: '',
   geminiApiKey: '',
-  proxyUrl: '',
+  // Zero-setup deployments set VITE_PROXY_URL at build time; everyone else
+  // leaves it blank and brings their own key.
+  proxyUrl: import.meta.env.VITE_PROXY_URL ?? '',
   temperature: 0.7,
   maxTokens: 2048,
   autoSpeech: false,

@@ -203,7 +203,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 89 tests against the real service and proxy modules with a
+`npm test` runs 96 tests against the real service and proxy modules with a
 stubbed `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration
@@ -224,8 +224,10 @@ stubbed `fetch` and synthetic SSE streams. Coverage:
   models, and real text extraction from a committed PDF fixture.
 - **`proxy.test.ts`** — the server-side proxy: provider allow-listing, model-id
   validation (including rejecting `../` that `encodeURIComponent` would leave
-  intact), a missing key reported without naming any variable, and the client
-  side sending no credential when a proxy is configured.
+  intact), a missing key reported without naming any variable, the client side
+  sending no credential when a proxy is configured, the streaming relay driven
+  through the real handler, and every rate-limit window including the global
+  bill guard.
 - **`storage.test.ts`** — the localStorage key migration.
 
 pdf.js itself is only exercised through its Node-compatible build in that last
@@ -245,39 +247,68 @@ deployment costs nothing to run and never holds anyone's key.
 
 ## 🔑 Key-free mode: running a proxy
 
-If you want visitors to land on the site and chat with **no setup at all**,
-deploy [`api/chat.ts`](api/chat.ts) and give it your key as a server
-environment variable.
+Want visitors to land and chat with **no setup at all**? Deploy
+[`api/chat.ts`](api/chat.ts) with your key in its environment. The key stays on
+the server; the browser never sees it.
 
-```
-OPENROUTER_API_KEY=sk-or-...   # any subset
-GROQ_API_KEY=gsk-...
-GEMINI_API_KEY=AIza...
-```
+### What it costs
 
-Then set **Settings (⚙️) → API proxy URL** to `/api/chat`. Every visitor's
-request is relayed through the function, which attaches your key on the server.
+The free tier is the constraint, not the API. Google's published rates
+([pricing](https://ai.google.dev/gemini-api/docs/pricing)) make paid usage cheap
+enough that the quota cliff disappears:
 
-### Why not just ship a default key in the app?
+| Model | $/1M in | $/1M out | 10,000 short messages |
+| --- | --- | --- | --- |
+| Gemini 2.5 Flash-Lite | $0.10 | $0.40 | **~$3** |
+| Gemini 2.5 Flash | $0.30 | $2.50 | ~$15.50 |
 
-Because it is not hidden. Vite inlines `VITE_*` values as string literals into
-the JavaScript it emits, so any key you compile in is readable by anyone who
-opens DevTools and will be spent by strangers. Verified on this repo: a
-`VITE_`-prefixed key ended up verbatim in `dist/assets/index-*.js`.
+Roughly three dollars for ten thousand messages, with no midnight reset and no
+429s. The paid tier also flips *"used to improve our products"* from Yes to No.
 
-### The trade-off, stated plainly
+### Setup
 
-A proxy makes setup instant but it does **not** make the free tiers unlimited —
-it makes them run out *faster*, because every visitor now draws on your single
-pool instead of their own. Free-tier quotas are a few hundred requests a day.
-That is roughly the first few dozen users, after which you either pay per token
-or everyone gets a 429.
+1. Put your key in the host's environment (see [`.env.example`](.env.example)):
 
-The proxy also spends *your* money and carries *your* provider terms. The
-Gemini free tier may be used by Google to improve its products and is not
-available for serving users in the EU/EEA/UK/Switzerland. Read your provider's
-terms before opening this to the public, and consider putting a rate limit or
-an allow-list in front of it.
+   ```
+   GEMINI_API_KEY=AIza...
+   VITE_PROXY_URL=/api/chat
+   ```
+
+   `GEMINI_API_KEY` is server-side only. `VITE_PROXY_URL` is build-time and is
+   **not** a secret — it is the URL of a public endpoint, and baking it in is
+   what removes setup for visitors.
+
+2. Deploy. On Vercel, `vercel.json` already configures the function; the Vite
+   preset handles the static build.
+
+3. Done. Visitors send messages immediately; requests relay through the proxy.
+
+Leaving `VITE_PROXY_URL` unset keeps the bring-your-own-key behaviour, where
+each visitor pastes a key into Settings.
+
+### Rate limits
+
+The proxy ships with fixed-window counters, defaults in `.env.example`:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RATE_LIMIT_RPM` | 20 | per visitor, per minute |
+| `RATE_LIMIT_PER_DAY` | 200 | per visitor, per day |
+| `RATE_LIMIT_GLOBAL_PER_DAY` | 2000 | everyone combined — the bill guard |
+
+Exceeding one returns `429` with a `Retry-After` header.
+
+**Honest limitation:** the counters live in instance memory. On a serverless
+host they reset on cold start and are not shared between instances, so this
+stops a casual script rather than a determined one. For a hard guarantee put a
+shared store (Upstash, Redis) behind the same `clientIp()` key.
+
+### Still worth knowing
+
+A shared key spends *your* money and carries *your* provider's terms. Read them
+before opening this to the public. And the free-tier Gemini key reportedly
+cannot be used to serve users in the EU/EEA/UK/Switzerland — the paid tier is
+the cleaner route for a public site.
 
 ---
 
