@@ -193,7 +193,7 @@ test('a missing API key errors out rather than fabricating an answer', async () 
   assert.equal(fetchCalled, false, 'must not hit the network without a key');
   assert.equal(rec.finished, null, 'must not produce a fake completion');
   assert.equal(rec.errors.length, 1);
-  assert.match(rec.errors[0].message, /No OpenRouter API key configured/);
+  assert.match(rec.errors[0].message, /API key is configured, so nothing was sent/);
   assert.match(rec.errors[0].message, /openrouter\.ai\/keys/);
 });
 
@@ -427,6 +427,25 @@ test('fetchOpenRouterFreeModels keeps only :free models and caps the list', asyn
   assert.equal(models[0].id, 'openrouter/vendor/model-19:free');
   // The discovered id must round-trip through the router.
   assert.deepEqual(resolveRoute(models[0].id)?.model, 'vendor/model-19:free');
+});
+
+test('fetchOpenRouterFreeModels reads vision support from input_modalities', async () => {
+  const data = [
+    { id: 'vendor/vision-model:free', name: 'Vision', context_length: 1000,
+      architecture: { input_modalities: ['text', 'image'] } },
+    { id: 'vendor/text-model:free', name: 'Text', context_length: 2000,
+      architecture: { input_modalities: ['text'] } },
+  ];
+
+  const models = await withFetch(async () => jsonResponse({ data }), () =>
+    fetchOpenRouterFreeModels()
+  );
+
+  const vision = models.find((m) => m.id === 'openrouter/vendor/vision-model:free');
+  const text = models.find((m) => m.id === 'openrouter/vendor/text-model:free');
+  assert.equal(vision?.supportsImages, true);
+  assert.match(vision?.badge ?? '', /Vision/);
+  assert.equal(text?.supportsImages, false);
 });
 
 test('fetchOpenRouterFreeModels rejects a non-OK catalog response', async () => {

@@ -15,13 +15,17 @@ import type { AIModel, SystemPersona } from '../types';
  *  - OpenRouter's free roster rotates; the slugs below were current at that date
  *    and `deepseek/*:free` / `gemma-2-*` are no longer offered for free.
  */
+/** Sentinel id: walk every free model the user has a key for, in order. */
+export const AUTO_MODEL_ID = 'auto/best-free';
+
 export const DEFAULT_MODELS: AIModel[] = [
   {
-    id: 'openrouter/openai/gpt-oss-20b:free',
-    name: 'GPT-OSS 20B',
-    provider: 'OpenRouter',
-    description: "OpenAI's open-weight model. Strong general-purpose free default.",
-    badge: 'Free',
+    id: AUTO_MODEL_ID,
+    name: 'Auto — use every free model',
+    provider: 'Auto',
+    description:
+      'Tries each free model in turn and moves on when one is rate-limited. Best way to avoid running out.',
+    badge: 'Recommended',
     isFreeByDefault: true,
     requiresKey: true,
     speed: 'Fast',
@@ -30,7 +34,18 @@ export const DEFAULT_MODELS: AIModel[] = [
     id: 'openrouter/google/gemma-4-31b-it:free',
     name: 'Gemma 4 31B',
     provider: 'OpenRouter',
-    description: "Google's open model. Fast, multilingual, good for summarising.",
+    description: "Google's open model. Reads images, fast, multilingual.",
+    badge: 'Free · Vision',
+    isFreeByDefault: true,
+    requiresKey: true,
+    speed: 'Fast',
+    supportsImages: true,
+  },
+  {
+    id: 'openrouter/openai/gpt-oss-20b:free',
+    name: 'GPT-OSS 20B',
+    provider: 'OpenRouter',
+    description: "OpenAI's open-weight model. Strong general-purpose choice.",
     badge: 'Free',
     isFreeByDefault: true,
     requiresKey: true,
@@ -67,6 +82,17 @@ export const DEFAULT_MODELS: AIModel[] = [
     speed: 'Moderate',
   },
   {
+    id: 'openrouter/nvidia/nemotron-nano-12b-v2-vl:free',
+    name: 'Nemotron Nano VL',
+    provider: 'OpenRouter',
+    description: 'Small vision-language model. Good for describing images.',
+    badge: 'Free · Vision',
+    isFreeByDefault: true,
+    requiresKey: true,
+    speed: 'Fast',
+    supportsImages: true,
+  },
+  {
     id: 'groq/openai/gpt-oss-120b',
     name: 'GPT-OSS 120B (Groq)',
     provider: 'Groq',
@@ -81,6 +107,26 @@ export const DEFAULT_MODELS: AIModel[] = [
     name: 'GPT-OSS 20B (Groq)',
     provider: 'Groq',
     description: 'Lightweight and extremely fast. Good free-tier token limits.',
+    badge: 'Ultra Fast',
+    isFreeByDefault: true,
+    requiresKey: true,
+    speed: 'Ultra Fast',
+  },
+  {
+    id: 'groq/qwen/qwen3.6-27b',
+    name: 'Qwen 3.6 27B (Groq)',
+    provider: 'Groq',
+    description: 'Separate daily quota from the GPT-OSS models on Groq.',
+    badge: 'Ultra Fast',
+    isFreeByDefault: true,
+    requiresKey: true,
+    speed: 'Ultra Fast',
+  },
+  {
+    id: 'groq/moonshotai/kimi-k2-instruct',
+    name: 'Kimi K2 (Groq)',
+    provider: 'Groq',
+    description: 'Another independent Groq quota pool for long conversations.',
     badge: 'Ultra Fast',
     isFreeByDefault: true,
     requiresKey: true,

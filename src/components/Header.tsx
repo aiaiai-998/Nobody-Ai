@@ -12,7 +12,7 @@ interface HeaderProps {
   hasMessages: boolean;
 }
 
-const PROVIDER_ORDER = ['OpenRouter', 'Groq', 'Offline demo'] as const;
+const PROVIDER_ORDER = ['Auto', 'OpenRouter', 'Groq', 'Offline demo'] as const;
 
 export const Header: React.FC<HeaderProps> = ({
   onToggleMobileSidebar,

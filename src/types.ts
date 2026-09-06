@@ -1,5 +1,20 @@
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+/** A file the user attached to a message. */
+export interface Attachment {
+  id: string;
+  kind: 'image' | 'document';
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  /** `data:` URL, for images sent to a vision model. */
+  dataUrl?: string;
+  /** Extracted plain text, for documents such as PDFs. */
+  text?: string;
+  /** Set when extraction failed, so the UI can explain instead of sending nothing. */
+  error?: string;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
@@ -7,6 +22,7 @@ export interface Message {
   timestamp: number;
   model?: string;
   error?: boolean;
+  attachments?: Attachment[];
 }
 
 export interface ChatSession {
@@ -20,7 +36,7 @@ export interface ChatSession {
 }
 
 /** Which upstream service actually runs the inference. */
-export type ModelProvider = 'OpenRouter' | 'Groq' | 'Offline demo';
+export type ModelProvider = 'Auto' | 'OpenRouter' | 'Groq' | 'Offline demo';
 
 export interface AIModel {
   /**
@@ -38,6 +54,8 @@ export interface AIModel {
   isFreeByDefault: boolean;
   requiresKey: boolean;
   speed: 'Ultra Fast' | 'Fast' | 'Moderate';
+  /** True when the model accepts `image_url` content parts. */
+  supportsImages?: boolean;
   /** Set on entries discovered from a provider's live catalog rather than curated here. */
   fromLiveCatalog?: boolean;
 }

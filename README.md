@@ -34,6 +34,24 @@ Kian AI.
 | **OpenRouter** | **50 requests/day**, 20 requests/minute | Rises to **1,000/day** permanently once the account has ever bought $10 of credits. The 20/min cap never changes. |
 | **Groq** | ~30 requests/minute + a per-model daily cap | Chat models sit around **1,000 requests/day**; some entry-level models are higher. Varies by model — check the console for live values. |
 
+### Getting the most out of it: **Auto** mode
+
+Pick **"Auto — use every free model"** in the model selector. Instead of dying
+when one model hits its limit, Kian walks every free model you have a key for
+and moves on:
+
+- **Groq first**, because its free caps are *per model* (~1,000 requests/day
+  each), so spreading across GPT-OSS 120B, GPT-OSS 20B, Qwen 3.6 and Kimi K2
+  stacks several independent daily pools.
+- **Then OpenRouter**, as a separate provider with its own quota.
+- It fails over on 429 / 404 / 5xx and **stops** on 401 (a bad key fails
+  everywhere — no point burning quota) or once a model has already started
+  streaming (so your answer is never silently swapped mid-sentence).
+- The message badge shows which model actually answered, marked `(failover)`.
+
+With both keys this turns a 50-request ceiling into a few thousand per day. It
+is still finite — it just takes a lot longer to reach.
+
 Things worth knowing before you rely on it:
 
 - **The limits are per API key, and every visitor brings their own.** Kian AI
@@ -45,6 +63,29 @@ Things worth knowing before you rely on it:
   month. That is why the model list is fetched live rather than hardcoded.
 - **Truly unlimited requires paying** — a paid (non-`:free`) model on either
   provider, billed per token.
+
+---
+
+## 📎 Attachments
+
+Click the paperclip, drag a file onto the box, or paste an image from the
+clipboard.
+
+| Type | What happens |
+|---|---|
+| **Images** (png/jpg/webp/gif) | Sent to a vision model as a base64 `image_url` part. In Auto mode Kian routes to a vision-capable model automatically; if you have picked a text-only model it tells you instead of failing at the API. |
+| **PDFs** | Text is extracted in your browser with pdf.js and folded into the prompt. Nothing is uploaded anywhere except to the model you chose. |
+| **Text files** (.txt, .md, .csv, .json, .html) | Read directly and inlined. |
+
+Limits: images 4 MB, documents 15 MB, and attached text is capped at 24,000
+characters so one huge file cannot blow the context window. A scanned
+image-only PDF has no text layer — Kian says so and suggests attaching it as an
+image instead.
+
+Vision depends on the model, not the app: the live OpenRouter catalog reports
+each model's `input_modalities`, and the curated presets flag the ones known to
+accept images. If none of your available models take images, you are told
+plainly rather than having the attachment silently dropped.
 
 ---
 
@@ -82,6 +123,10 @@ small change if you want it to install to a home screen.
 
 - **Streaming responses** — token-by-token, with a working **Stop** button that
   actually aborts the request.
+- **Auto failover** — walks every free model you have a key for and moves on
+  when one is rate-limited, so a single model's quota is not a hard stop.
+- **Attachments** — images to vision models, PDFs via client-side text
+  extraction, plus drag-and-drop and clipboard paste.
 - **Live model catalog** — OpenRouter's current `:free` list is fetched at
   startup, so a model being retired doesn't strand you. Curated presets are the
   fallback when that request fails.
@@ -113,15 +158,25 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs `tests/aiService.test.ts` against the real service module with a
-stubbed `fetch` and synthetic SSE streams. It covers:
+`npm test` runs 48 tests against the real service modules with a stubbed
+`fetch` and synthetic SSE streams. Coverage:
 
-- model-id → provider/slug routing, including migration of retired ids;
-- SSE parsing across chunk boundaries, CRLF, comments, and a missing `[DONE]`;
-- the exact request payload sent to each provider (`model`, auth header,
-  `max_completion_tokens` vs `max_tokens`);
-- error mapping for missing key, 401, 429 and network failure;
-- abort behaviour, and the live-catalog filter.
+- **`aiService.test.ts`** — model-id → provider/slug routing including migration
+  of retired ids; SSE parsing across chunk boundaries, CRLF, comments and a
+  missing `[DONE]`; the exact request payload per provider (`model`, auth
+  header, `max_completion_tokens` vs `max_tokens`); error mapping for missing
+  key, 401, 429 and network failure; abort behaviour; live-catalog filtering and
+  vision detection from `input_modalities`.
+- **`failover.test.ts`** — chain construction per available key; failover on
+  429; refusing to switch model once output has streamed; not retrying a 401;
+  image routing to vision models and the resulting `content` array.
+- **`attachments.test.ts`** — mime classification, document inlining, the
+  24,000-character budget across multiple files, image parts only for vision
+  models, and real text extraction from a committed PDF fixture.
+- **`storage.test.ts`** — the localStorage key migration.
+
+pdf.js itself is only exercised through its Node-compatible build in that last
+file; the browser worker wiring is not covered by the suite.
 
 ---
 
@@ -147,4 +202,4 @@ retire an id, so existing users' saved settings keep working.
 ## Tech stack
 
 React 19 · TypeScript · Vite 8 · Tailwind CSS v4 · Lucide icons · marked +
-DOMPurify · canvas-confetti
+DOMPurify · pdf.js (lazy-loaded) · canvas-confetti

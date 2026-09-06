@@ -5,7 +5,7 @@ import { ChatMessage } from './components/ChatMessage';
 import { ChatInput } from './components/ChatInput';
 import { SettingsModal } from './components/SettingsModal';
 import { DeployModal } from './components/DeployModal';
-import type { AIModel, Message, ChatSession, AppSettings } from './types';
+import type { AIModel, Attachment, Message, ChatSession, AppSettings } from './types';
 import { DEFAULT_MODELS, SYSTEM_PERSONAS } from './config/constants';
 import { STORAGE_KEY_SESSIONS, STORAGE_KEY_SETTINGS, migrateLegacyKeys } from './config/storage';
 import { fetchOpenRouterFreeModels, normalizeModelId, sendChatMessage } from './services/aiService';
@@ -216,8 +216,8 @@ Your keys and chat history stay in this browser's local storage.`,
   };
 
   // Handle Send Message
-  const handleSendMessage = async (text: string) => {
-    if (!text.trim() || isGenerating) return;
+  const handleSendMessage = async (text: string, attachments: Attachment[] = []) => {
+    if ((!text.trim() && attachments.length === 0) || isGenerating) return;
 
     const targetSession = activeSession;
     if (!targetSession) return;
@@ -231,6 +231,7 @@ Your keys and chat history stay in this browser's local storage.`,
       role: 'user',
       content: text,
       timestamp: Date.now(),
+      attachments: attachments.length > 0 ? attachments : undefined,
     };
 
     const assistantMsgId = `msg_${Date.now()}_assistant`;
@@ -263,6 +264,21 @@ Your keys and chat history stay in this browser's local storage.`,
       })
     );
 
+    const noteModelUsed = (modelId: string) => {
+      const label = models.find((m) => m.id === modelId)?.name ?? modelId;
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id !== sessionId) return s;
+          return {
+            ...s,
+            messages: s.messages.map((m) =>
+              m.id === assistantMsgId ? { ...m, model: `${label} (failover)` } : m
+            ),
+          };
+        })
+      );
+    };
+
     setIsGenerating(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -275,6 +291,7 @@ Your keys and chat history stay in this browser's local storage.`,
         activePersonaObj.systemPrompt,
         settings,
         {
+          onModelUsed: noteModelUsed,
           onChunk: (chunkText) => {
             setSessions((prev) =>
               prev.map((s) => {
@@ -308,7 +325,7 @@ Your keys and chat history stay in this browser's local storage.`,
             );
           },
         },
-        { signal: controller.signal }
+        { signal: controller.signal, knownModels: models }
       );
     } finally {
       if (abortRef.current === controller) abortRef.current = null;

@@ -1,0 +1,175 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import '../src/config/polyfills';
+import {
+  MAX_ATTACHMENT_TEXT_CHARS,
+  buildMessageContent,
+  inlineDocumentText,
+  messageHasImages,
+} from '../src/services/aiService';
+import {
+  MAX_IMAGE_BYTES,
+  formatBytes,
+  isImageMime,
+  isPdfMime,
+  isPlainTextMime,
+  pdfItemsToText,
+} from '../src/services/attachments';
+import type { Attachment, Message } from '../src/types';
+
+const IMAGE: Attachment = {
+  id: 'img1',
+  kind: 'image',
+  name: 'photo.png',
+  mimeType: 'image/png',
+  sizeBytes: 2048,
+  dataUrl: 'data:image/png;base64,AAAA',
+};
+
+const DOC: Attachment = {
+  id: 'doc1',
+  kind: 'document',
+  name: 'report.pdf',
+  mimeType: 'application/pdf',
+  sizeBytes: 4096,
+  text: 'Annual revenue rose 12% year over year.',
+};
+
+function userMessage(content: string, attachments?: Attachment[]): Message {
+  return { id: 'm1', role: 'user', content, timestamp: 0, attachments };
+}
+
+/* ---------- mime helpers ---------- */
+
+test('mime helpers classify attachments', () => {
+  assert.equal(isImageMime('image/png'), true);
+  assert.equal(isImageMime('image/svg+xml'), true);
+  assert.equal(isImageMime('application/pdf'), false);
+  assert.equal(isPdfMime('application/pdf'), true);
+  assert.equal(isPdfMime('image/png'), false);
+  assert.equal(isPlainTextMime('text/plain'), true);
+  assert.equal(isPlainTextMime('text/csv'), true);
+  assert.equal(isPlainTextMime('application/pdf'), false);
+});
+
+test('formatBytes is human readable', () => {
+  assert.equal(formatBytes(512), '512 B');
+  assert.equal(formatBytes(2048), '2.0 KB');
+  assert.equal(formatBytes(MAX_IMAGE_BYTES), '4.0 MB');
+});
+
+/* ---------- content building ---------- */
+
+test('a message with no attachments stays a plain string', () => {
+  assert.equal(buildMessageContent(userMessage('just text'), true), 'just text');
+  assert.equal(buildMessageContent(userMessage('just text', []), true), 'just text');
+});
+
+test('document text is folded into the prompt', () => {
+  const out = buildMessageContent(userMessage('Summarise this', [DOC]), false);
+  assert.equal(typeof out, 'string');
+  const text = out as string;
+  assert.match(text, /^Summarise this/);
+  assert.match(text, /--- Attached file: report\.pdf ---/);
+  assert.match(text, /Annual revenue rose 12%/);
+});
+
+test('an image becomes a content array only for vision models', () => {
+  const parts = buildMessageContent(userMessage('What is this?', [IMAGE]), true);
+  assert.ok(Array.isArray(parts));
+  const arr = parts as Array<Record<string, unknown>>;
+  assert.equal(arr.length, 2);
+  assert.deepEqual(arr[0], { type: 'text', text: 'What is this?' });
+  assert.deepEqual(arr[1], {
+    type: 'image_url',
+    image_url: { url: 'data:image/png;base64,AAAA' },
+  });
+
+  // A text-only model gets the prompt without the image rather than a 400.
+  const textOnly = buildMessageContent(userMessage('What is this?', [IMAGE]), false);
+  assert.equal(typeof textOnly, 'string');
+  assert.equal(textOnly, 'What is this?');
+});
+
+test('multiple images all become parts', () => {
+  const second = { ...IMAGE, id: 'img2', dataUrl: 'data:image/png;base64,BBBB' };
+  const parts = buildMessageContent(userMessage('compare', [IMAGE, second]), true) as Array<
+    Record<string, unknown>
+  >;
+  assert.equal(parts.length, 3);
+  assert.equal(parts[1].type, 'image_url');
+  assert.equal(parts[2].type, 'image_url');
+});
+
+test('messageHasImages only counts images that actually carry bytes', () => {
+  assert.equal(messageHasImages(userMessage('x', [IMAGE])), true);
+  assert.equal(messageHasImages(userMessage('x', [DOC])), false);
+  assert.equal(
+    messageHasImages(userMessage('x', [{ ...IMAGE, dataUrl: undefined }])),
+    false
+  );
+  assert.equal(messageHasImages(userMessage('x')), false);
+});
+
+test('an attachment that failed to read is reported to the model, not silently dropped', () => {
+  const broken: Attachment = { ...DOC, id: 'doc2', text: undefined, error: 'password protected' };
+  const text = inlineDocumentText('Summarise', [broken]);
+  assert.match(text, /Could not read this file: password protected/);
+});
+
+test('oversized documents are truncated rather than blowing the context window', () => {
+  const huge: Attachment = { ...DOC, id: 'doc3', text: 'x'.repeat(MAX_ATTACHMENT_TEXT_CHARS + 5000) };
+  const text = inlineDocumentText('Summarise', [huge]);
+  assert.match(text, /\[truncated\]$/);
+  // The prompt itself plus a little scaffolding, but not the whole document.
+  assert.ok(text.length < MAX_ATTACHMENT_TEXT_CHARS + 200);
+});
+
+test('the character budget is shared across several documents', () => {
+  const half = MAX_ATTACHMENT_TEXT_CHARS / 2;
+  const a = { ...DOC, id: 'd1', name: 'a.txt', text: 'A'.repeat(half) };
+  const b = { ...DOC, id: 'd2', name: 'b.txt', text: 'B'.repeat(half + 1000) };
+  const text = inlineDocumentText('q', [a, b]);
+  assert.match(text, /a\.txt/);
+  assert.match(text, /b\.txt/);
+  assert.ok(text.length < MAX_ATTACHMENT_TEXT_CHARS + 200);
+});
+
+/* ---------- pdf.js ---------- */
+
+test('pdf.js extracts the text layer from a real PDF and pdfItemsToText renders it', async () => {
+  // Exercised against pdf.js's Node-compatible build; the browser build differs
+  // only in how the worker is loaded. Proves the Promise.try shim is doing its
+  // job and that the item->text mapping produces real content.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pdfjs: any = await import('../node_modules/pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = fileURLToPath(
+    new URL('../node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url)
+  );
+
+  const bytes = new Uint8Array(
+    readFileSync(fileURLToPath(new URL('./fixtures/sample.pdf', import.meta.url)))
+  );
+
+  const task = pdfjs.getDocument({ data: bytes.slice() });
+  try {
+    const doc = await task.promise;
+    assert.ok(doc.numPages >= 1);
+    const page = await doc.getPage(1);
+    const content = await page.getTextContent();
+    assert.equal(pdfItemsToText(content.items), 'Kian AI fixture document');
+  } finally {
+    await task.destroy();
+  }
+});
+
+test('pdfItemsToText collapses whitespace and ignores non-text items', () => {
+  assert.equal(
+    pdfItemsToText([{ str: 'Hello' }, { str: '   world  ' }, {}]),
+    'Hello world'
+  );
+  assert.equal(pdfItemsToText([]), '');
+});

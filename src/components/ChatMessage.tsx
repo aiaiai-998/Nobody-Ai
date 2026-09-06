@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { Message } from '../types';
-import { Bot, User, Copy, Check, Volume2, VolumeX, AlertTriangle } from 'lucide-react';
+import { Bot, User, Copy, Check, Volume2, VolumeX, AlertTriangle, FileText } from 'lucide-react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 
@@ -131,6 +131,34 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, isStreaming }
               </div>
             )}
           </div>
+
+          {/* Attachments */}
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {message.attachments.map((a) =>
+                a.kind === 'image' && a.dataUrl ? (
+                  <img
+                    key={a.id}
+                    src={a.dataUrl}
+                    alt={a.name}
+                    className="max-h-56 rounded-xl border border-slate-700 object-contain bg-slate-950"
+                  />
+                ) : (
+                  <div
+                    key={a.id}
+                    className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-[11px] text-slate-300"
+                    title={a.error ?? a.name}
+                  >
+                    <FileText size={13} className="text-emerald-400 shrink-0" />
+                    <span className="truncate max-w-[180px]">{a.name}</span>
+                    {a.error && (
+                      <span className="text-amber-400 shrink-0">unreadable</span>
+                    )}
+                  </div>
+                )
+              )}
+            </div>
+          )}
 
           {/* Error Banner if any */}
           {message.error && (
