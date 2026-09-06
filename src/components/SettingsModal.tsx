@@ -114,7 +114,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               type="password"
               value={settings.geminiApiKey}
               onChange={(e) => onUpdateSettings({ geminiApiKey: e.target.value })}
-              placeholder="AIza..."
+              placeholder="AIza... or AQ...."
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500"
             />
             <p className="text-[10px] text-slate-500 leading-relaxed">

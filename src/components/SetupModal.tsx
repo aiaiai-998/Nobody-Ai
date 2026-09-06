@@ -54,7 +54,7 @@ export const SetupModal: React.FC<SetupModalProps> = ({
     gemini: {
       label: 'Gemini',
       url: 'https://aistudio.google.com/app/apikey',
-      placeholder: 'AIza...',
+      placeholder: 'AIza... or AQ....',
       tint: 'text-emerald-300',
       border: 'focus:border-emerald-500',
       blurb:

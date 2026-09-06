@@ -292,3 +292,53 @@ test('auto mode fails over from a rate-limited Groq model to Gemini', async () =
   assert.deepEqual(rec.errors, []);
   assert.ok(rec.modelsUsed.length > 0, 'the UI is told which model answered');
 });
+
+/**
+ * Google AI Studio now issues keys with an `AQ.` prefix alongside the older
+ * `AIza...` ones. The app must not second-guess the format: it has no way to
+ * know what Google will issue next, and a strict regex would reject valid keys.
+ */
+test('a newer AQ.-prefixed key is sent verbatim, not rejected', async () => {
+  const rec = recorder();
+  const AQ_KEY = 'AQ.Ab8exampleplaceholder-not-a-real-key-xxxxxxxxxxxxxx';
+  let sent = '';
+
+  await withFetch(
+    async (_input, init) => {
+      const hdrs = (init?.headers ?? {}) as Record<string, string>;
+      sent = hdrs['x-goog-api-key'] ?? '';
+      return sseResponse(['data: {"candidates":[{"content":{"parts":[{"text":"ok"}],"role":"model"}}]}\n\n']);
+    },
+    () =>
+      sendChatMessage(
+        HISTORY,
+        'You are helpful.',
+        { ...BASE_SETTINGS, geminiApiKey: AQ_KEY, activeModelId: 'gemini/gemini-2.5-flash' },
+        rec.callbacks
+      )
+  );
+
+  assert.equal(sent, AQ_KEY, 'the key must reach Google untouched');
+  assert.equal(rec.finished, 'ok');
+});
+
+test('the classic AIza key still works too', async () => {
+  const rec = recorder();
+  let sent = '';
+  await withFetch(
+    async (_input, init) => {
+      const hdrs = (init?.headers ?? {}) as Record<string, string>;
+      sent = hdrs['x-goog-api-key'] ?? '';
+      return sseResponse(['data: {"candidates":[{"content":{"parts":[{"text":"ok"}],"role":"model"}}]}\n\n']);
+    },
+    () =>
+      sendChatMessage(
+        HISTORY,
+        'You are helpful.',
+        { ...BASE_SETTINGS, geminiApiKey: 'AIzaSyA1234567890abcdefghijklmnopqrstu', activeModelId: 'gemini/gemini-2.5-flash' },
+        rec.callbacks
+      )
+  );
+  assert.equal(sent, 'AIzaSyA1234567890abcdefghijklmnopqrstu');
+  assert.equal(rec.finished, 'ok');
+});

@@ -26,6 +26,16 @@ Get a free key: [Gemini](https://aistudio.google.com/app/apikey) ·
 [Groq](https://console.groq.com/keys) ·
 [OpenRouter](https://openrouter.ai/keys). Paste it in **Settings (⚙️)**.
 
+**Your key is never validated, on purpose.** Google AI Studio now issues keys
+starting with `AQ.` as well as the older `AIza...`, and provider formats change
+without notice. A strict regex would reject perfectly good keys, so Kian AI
+trims what you paste and sends it exactly as-is. If the key is wrong you get the
+provider's own 401 back, which is the authority that matters.
+
+**Never commit a key.** They belong in the browser's localStorage (per visitor)
+or in your host's environment variables (proxy mode) — never in the repository,
+and never pasted into chat, an issue, or a screenshot.
+
 ---
 
 ## 💸 "Free" means $0, not unlimited
@@ -193,7 +203,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 83 tests against the real service and proxy modules with a
+`npm test` runs 85 tests against the real service and proxy modules with a
 stubbed `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration
