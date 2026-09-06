@@ -203,7 +203,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 102 tests against the real service and proxy modules with a
+`npm test` runs 104 tests against the real service and proxy modules with a
 stubbed `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration
@@ -226,8 +226,9 @@ stubbed `fetch` and synthetic SSE streams. Coverage:
   validation (including rejecting `../` that `encodeURIComponent` would leave
   intact), a missing key reported without naming any variable, the client side
   sending no credential when a proxy is configured, the streaming relay driven
-  through the real handler, and every rate-limit window including the global
-  bill guard.
+  through the real handler, every rate-limit window including the global bill
+  guard, the optional Redis-backed limiter, and cross-provider failover when
+  the proxy relays a 429.
 - **`storage.test.ts`** — the localStorage key migration.
 
 pdf.js itself is only exercised through its Node-compatible build in that last

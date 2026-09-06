@@ -554,3 +554,61 @@ describe('shared (Redis-backed) rate limiting', () => {
     assert.notEqual(verdict, 'threw');
   });
 });
+
+/**
+ * The fully-free-for-everyone configuration: no client keys, no money, one
+ * proxy holding free keys for all three providers. Auto mode then has 12 models
+ * to burn through, and when one provider's daily quota dies the chain moves to
+ * the next instead of showing the visitor an error. This is what makes ~5,000
+ * free requests a day possible rather than ~1,250.
+ */
+describe('free-tier failover through the proxy', () => {
+  it('moves to the next provider when the proxy relays a 429', async () => {
+    const rec = recorder();
+    const attempted: Array<{ provider: string; model: string }> = [];
+
+    await withFetch(
+      async (_input, init) => {
+        const body = JSON.parse(String(init?.body)) as { provider: string; model: string };
+        attempted.push({ provider: body.provider, model: body.model });
+        // Every Groq model is exhausted; Gemini still has quota.
+        if (body.provider === 'groq') {
+          return jsonResponse({ error: { message: 'Rate limit reached for free tier' } }, 429);
+        }
+        return sseResponse(['data: {"candidates":[{"content":{"parts":[{"text":"from gemini"}],"role":"model"}}]}\n\n']);
+      },
+      () =>
+        sendChatMessage(
+          HISTORY,
+          'You are helpful.',
+          // No keys at all - only the proxy.
+          { ...BASE_SETTINGS, proxyUrl: '/api/chat', activeModelId: 'auto/best-free' },
+          rec.callbacks
+        )
+    );
+
+    assert.equal(rec.finished, 'from gemini', 'the visitor should get an answer, not an error');
+    assert.ok(attempted.length > 4, `expected to burn through the Groq models, tried ${attempted.length}`);
+    assert.equal(attempted[0].provider, 'groq');
+    assert.equal(attempted[attempted.length - 1].provider, 'gemini');
+    // Every request went to the proxy; no provider was contacted directly.
+    assert.ok(attempted.every((a) => a.provider), 'each attempt must declare its provider to the proxy');
+  });
+
+  it('reports honestly when every free provider is exhausted', async () => {
+    const rec = recorder();
+    await withFetch(
+      async () => jsonResponse({ error: { message: 'free tier quota exceeded' } }, 429),
+      () =>
+        sendChatMessage(
+          HISTORY,
+          'You are helpful.',
+          { ...BASE_SETTINGS, proxyUrl: '/api/chat', activeModelId: 'auto/best-free' },
+          rec.callbacks
+        )
+    );
+    assert.equal(rec.finished, null, 'must not fabricate a reply');
+    assert.equal(rec.errors.length, 1);
+    assert.match(rec.errors[0].message, /quota exceeded|rate limit/i);
+  });
+});

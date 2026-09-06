@@ -1,32 +1,105 @@
 # Deploying Kian AI so nobody needs an API key
 
-This gets you a public URL where visitors land and chat immediately — no setup
-screen, no key entry. Roughly 20 minutes, and about **$3 per 10,000 messages**
-after that.
+Both paths below give visitors a URL where they land and chat immediately — no
+setup screen, no key entry. The only difference is what happens when the free
+quota runs out.
 
-You need: a Google account, a GitHub account, a Vercel account. All free.
+| | **A. Fully free** | **B. Paid** |
+| --- | --- | --- |
+| Cost to you | **$0** | ~$3 per 10,000 messages |
+| Setup for visitors | none | none |
+| Roughly per day | ~5,000 requests, then a clear message until midnight | unlimited |
+| Needs a card | no | yes |
+| Best for | a group you know | anything public |
+
+Start with **A**. You can switch to B later by adding one environment variable —
+nothing else changes.
 
 ---
 
-## 1. Get a paid Gemini key (~5 min)
+# A. Fully free for everyone
+
+Three providers, all with free tiers that need no card. The proxy holds all
+three keys; Auto mode then has 12 models to burn through, and when one
+provider's quota dies it silently moves to the next rather than erroring.
+
+## A1. Collect three free keys (~10 min)
+
+| Provider | Get a key | Roughly per day |
+| --- | --- | --- |
+| Groq | [console.groq.com/keys](https://console.groq.com/keys) | ~1,000 **per model**, and the app uses 4 |
+| Gemini | [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) | ~250–1,500 (Flash) + ~1,000 (Flash-Lite) |
+| OpenRouter | [openrouter.ai/keys](https://openrouter.ai/keys) | 50, shared across all its models |
+
+**Do not enable billing.** Staying off billing is what keeps this at $0.
+
+That works out to roughly **5,000 free requests a day** on conservative
+numbers. At ~30 messages a person, that's well over 100 people daily.
+
+Treat these figures as estimates: providers change them without notice, and
+published numbers for Groq in particular disagree by an order of magnitude. The
+app's own model picker shows what each provider is serving today.
+
+## A2. Environment variables
+
+```
+GEMINI_API_KEY=AIza...
+GROQ_API_KEY=gsk_...
+OPENROUTER_API_KEY=sk-or-...
+VITE_PROXY_URL=/api/chat
+```
+
+Leave `RATE_LIMIT_*` at their defaults, or lower `RATE_LIMIT_PER_DAY` so one
+person cannot drain the whole pool before others get a turn.
+
+## A3. Deploy
+
+Follow steps 2–3 in section B below (GitHub, then import into Vercel). The
+build is identical; only the environment variables differ.
+
+## A4. What happens at the end of the day
+
+When every provider is exhausted the visitor gets a plain-language message
+rather than a fake reply or a stack trace, and the quota resets at midnight.
+That is the trade you accepted for $0 — it is a ceiling, not a failure.
+
+## Free-tier conditions worth knowing
+
+- On the free tier **Google may use prompts to improve its products.** The paid
+  tier says no.
+- The free-tier Gemini key reportedly **cannot be used to serve users in the
+  EU/EEA/UK/Switzerland.**
+- OpenRouter's free endpoints are lowest priority and can be slow or
+  unavailable at peak times. That is why they sit last in the chain.
+
+---
+
+# B. Paid: never runs out
+
+About **$3 per 10,000 messages**. Same deployment, plus billing.
+
+You need: a Google account, a GitHub account, a Vercel account.
+
+## B1. Get a paid Gemini key (~5 min)
 
 1. Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey) and sign in.
 2. Create a key (or use the one you have).
 3. **Enable billing on that Cloud project.** This is the step people miss — the
    free tier needs no card, the paid tier does. Without it you get a 429 the
    moment the free quota runs out, which is the exact problem you're avoiding.
+   (Path A deliberately skips this.)
 4. **Set a budget cap** in Google Cloud → Billing → Budgets. Make it something
    you're happy losing, like $10/month. Google will email you before it's hit.
 
 Your key stays in the server's environment. It never reaches a browser.
 
-## 2. Put the code on GitHub (~5 min)
+## B2. Put the code on GitHub (~5 min)
 
 The repository is already committed. Push it to a GitHub repo you own —
 either "New repository" on github.com and push, or import it. Vercel deploys
 from there.
 
-## 3. Import into Vercel (~5 min)
+## B3. Import into Vercel (~5 min)
 
 1. [vercel.com](https://vercel.com) → **Add New → Project**.
 2. Import your repo. Vercel detects Vite automatically — leave the build
@@ -47,7 +120,7 @@ from there.
 
 4. Deploy. `vercel.json` already sets the function timeout.
 
-## 4. Check it worked (~2 min)
+## B4. Check it worked (~2 min)
 
 Open your new URL. **You should not see a key prompt.** Send a message — it
 should stream back.
@@ -61,7 +134,7 @@ If it doesn't:
 | `429` immediately | Billing isn't enabled on the Google project, or you're over the rate limit. |
 | `404` on `/api/chat` | `api/chat.ts` isn't in the repo root that Vercel imported. |
 
-## 5. Optional: make the rate limits actually hold
+## B5. Optional: make the rate limits actually hold
 
 The built-in counters live in instance memory. On a public URL that's a
 deterrent, not a guarantee — a cold start resets them.
@@ -78,7 +151,7 @@ applies, so the endpoint doesn't go unprotected.
 
 ---
 
-## What this costs
+## What B costs
 
 Google's published rates ([pricing](https://ai.google.dev/gemini-api/docs/pricing)):
 
