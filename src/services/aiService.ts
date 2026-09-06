@@ -20,7 +20,7 @@ export interface SendOptions {
   knownModels?: AIModel[];
 }
 
-export type ProviderId = 'openrouter' | 'groq' | 'offline';
+export type ProviderId = 'openrouter' | 'groq' | 'gemini' | 'offline';
 
 export interface Route {
   provider: ProviderId;
@@ -32,6 +32,7 @@ export interface Route {
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
  * Attached documents are inlined as text. Capped so one large PDF cannot blow
@@ -49,7 +50,14 @@ export const MAX_IMAGE_PARTS_PER_REQUEST = 10;
 const PROVIDER_LABEL: Record<ProviderId, string> = {
   openrouter: 'OpenRouter',
   groq: 'Groq',
+  gemini: 'Gemini',
   offline: 'offline demo',
+};
+
+const PROVIDER_KEY_URL: Record<Exclude<ProviderId, 'offline'>, string> = {
+  openrouter: 'https://openrouter.ai/keys',
+  groq: 'https://console.groq.com/keys',
+  gemini: 'https://aistudio.google.com/app/apikey',
 };
 
 /** HTTP statuses worth retrying against a different model. */
@@ -87,6 +95,14 @@ export function resolveRoute(rawModelId: string): Route | null {
     return { provider: 'groq', model, requiresKey: true };
   }
 
+  // Gemini slugs have no org prefix (`gemini-2.5-flash`), so the id itself is
+  // the whole slug after the provider segment.
+  if (modelId.startsWith('gemini/')) {
+    const model = modelId.slice('gemini/'.length);
+    if (!model) return null;
+    return { provider: 'gemini', model, requiresKey: true };
+  }
+
   return null;
 }
 
@@ -94,10 +110,22 @@ function providerOf(modelId: string): ProviderId | null {
   return resolveRoute(modelId)?.provider ?? null;
 }
 
+function keyFor(provider: ProviderId, settings: AppSettings): string | undefined {
+  switch (provider) {
+    case 'groq':
+      return settings.groqApiKey?.trim() || undefined;
+    case 'gemini':
+      return settings.geminiApiKey?.trim() || undefined;
+    case 'openrouter':
+      return settings.openRouterApiKey?.trim() || undefined;
+    default:
+      return undefined;
+  }
+}
+
 function hasKeyFor(provider: ProviderId, settings: AppSettings): boolean {
   if (provider === 'offline') return true;
-  const key = provider === 'groq' ? settings.groqApiKey : settings.openRouterApiKey;
-  return Boolean(key?.trim());
+  return Boolean(keyFor(provider, settings));
 }
 
 /** Models that only accept `max_completion_tokens` (OpenAI reasoning-style APIs). */
@@ -161,7 +189,8 @@ export class ApiError extends Error {
 }
 
 function hintForStatus(status: number, provider: ProviderId, model: string): string | undefined {
-  const keyUrl = provider === 'groq' ? 'https://console.groq.com/keys' : 'https://openrouter.ai/keys';
+  if (provider === 'offline') return undefined;
+  const keyUrl = PROVIDER_KEY_URL[provider];
 
   switch (status) {
     case 401:
@@ -281,6 +310,67 @@ export function pruneOldImages(
 
 export function messageHasImages(message: Message): boolean {
   return (message.attachments ?? []).some((a) => a.kind === 'image' && Boolean(a.dataUrl));
+}
+
+/* ---------- Gemini request shape ---------- */
+
+export type GeminiPart =
+  | { text: string }
+  | { inline_data: { mime_type: string; data: string } };
+
+/** Split `data:image/png;base64,AAAA` into its mime type and raw base64. */
+export function splitDataUrl(dataUrl: string): { mimeType: string; data: string } | null {
+  const match = /^data:([^;,]*)?(;base64)?,([\s\S]*)$/.exec(dataUrl);
+  if (!match) return null;
+  return { mimeType: match[1] || 'application/octet-stream', data: match[3] };
+}
+
+/** Build the `parts` array for one message in Gemini's native format. */
+export function buildGeminiParts(message: Message, supportsImages: boolean): GeminiPart[] {
+  const attachments = message.attachments ?? [];
+  const text = attachments.length > 0 ? inlineDocumentText(message.content, attachments) : message.content;
+
+  const parts: GeminiPart[] = [];
+  if (text) parts.push({ text });
+
+  if (supportsImages) {
+    for (const a of attachments) {
+      if (a.kind !== 'image' || !a.dataUrl) continue;
+      const split = splitDataUrl(a.dataUrl);
+      if (split) parts.push({ inline_data: { mime_type: split.mimeType, data: split.data } });
+    }
+  }
+
+  return parts;
+}
+
+/**
+ * Assemble a `streamGenerateContent` body. Gemini takes the system prompt in a
+ * separate `systemInstruction` field and labels assistant turns `model`.
+ */
+export function buildGeminiPayload(
+  messages: Message[],
+  systemPrompt: string,
+  settings: AppSettings,
+  supportsImages: boolean
+): Record<string, unknown> {
+  return {
+    systemInstruction: { parts: [{ text: systemPrompt }] },
+    contents: messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: buildGeminiParts(m, supportsImages),
+      })),
+    generationConfig: {
+      temperature: settings.temperature,
+      maxOutputTokens: settings.maxTokens,
+    },
+  };
+}
+
+function geminiStreamUrl(model: string): string {
+  return `${GEMINI_BASE_URL}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
 }
 
 /* ---------- live catalog ---------- */
@@ -427,12 +517,11 @@ async function attemptModel(
     };
   }
 
-  const apiKey =
-    route.provider === 'groq' ? settings.groqApiKey?.trim() : settings.openRouterApiKey?.trim();
+  const apiKey = keyFor(route.provider, settings);
 
   if (!apiKey) {
-    const keyUrl =
-      route.provider === 'groq' ? 'https://console.groq.com/keys' : 'https://openrouter.ai/keys';
+    // `offline` already returned above, so the lookup is always defined.
+    const keyUrl = PROVIDER_KEY_URL[route.provider];
     return {
       ok: false,
       text: '',
@@ -445,10 +534,14 @@ async function attemptModel(
     };
   }
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-  };
+  // Gemini authenticates with its own header and has no OpenRouter-style
+  // attribution headers.
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (route.provider === 'gemini') {
+    headers['x-goog-api-key'] = apiKey;
+  } else {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
 
   if (route.provider === 'openrouter') {
     const referer = getReferer();
@@ -456,25 +549,33 @@ async function attemptModel(
     headers['X-Title'] = 'Kian AI';
   }
 
-  const payload: Record<string, unknown> = {
-    model: route.model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...messages.map((m) => ({ role: m.role, content: buildMessageContent(m, supportsImages) })),
-    ],
-    temperature: settings.temperature,
-    stream: true,
-  };
+  let url: string;
+  let payload: Record<string, unknown>;
 
-  if (usesCompletionTokenLimit(route.model)) {
-    payload.max_completion_tokens = settings.maxTokens;
+  if (route.provider === 'gemini') {
+    url = geminiStreamUrl(route.model);
+    payload = buildGeminiPayload(messages, systemPrompt, settings, supportsImages);
   } else {
-    payload.max_tokens = settings.maxTokens;
+    url = route.provider === 'groq' ? GROQ_URL : OPENROUTER_URL;
+    payload = {
+      model: route.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        ...messages.map((m) => ({ role: m.role, content: buildMessageContent(m, supportsImages) })),
+      ],
+      temperature: settings.temperature,
+      stream: true,
+    };
+    if (usesCompletionTokenLimit(route.model)) {
+      payload.max_completion_tokens = settings.maxTokens;
+    } else {
+      payload.max_tokens = settings.maxTokens;
+    }
   }
 
   let response: Response;
   try {
-    response = await fetch(route.provider === 'groq' ? GROQ_URL : OPENROUTER_URL, {
+    response = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
@@ -513,7 +614,7 @@ async function attemptModel(
   let streamed = false;
   let text = '';
   try {
-    text = await handleSSEStream(
+    text = await (route.provider === 'gemini' ? handleGeminiSSEStream : handleSSEStream)(
       response,
       {
         onChunk: (t) => {
@@ -656,11 +757,13 @@ export async function sendChatMessage(
 }
 
 /**
- * Parse an OpenAI-compatible SSE stream, emitting the accumulated text on each
- * content delta. Returns the full text. Exported for testing.
+ * Read an SSE stream, accumulating whatever text `extract` pulls out of each
+ * event. Shared by the OpenAI-shaped providers and Gemini, which wrap the delta
+ * differently. Returns the full text.
  */
-export async function handleSSEStream(
+export async function readSSE(
   response: Response,
+  extract: (parsed: unknown) => string,
   callbacks: StreamCallbacks,
   signal?: AbortSignal
 ): Promise<string> {
@@ -683,7 +786,7 @@ export async function handleSSEStream(
     else return;
     if (!jsonStr) return;
 
-    let parsed: { choices?: Array<{ delta?: { content?: string } }> };
+    let parsed: unknown;
     try {
       parsed = JSON.parse(jsonStr);
     } catch {
@@ -691,7 +794,7 @@ export async function handleSSEStream(
       return;
     }
 
-    const delta = parsed.choices?.[0]?.delta?.content;
+    const delta = extract(parsed);
     if (delta) {
       accumulated += delta;
       callbacks.onChunk(accumulated);
@@ -723,4 +826,42 @@ export async function handleSSEStream(
 
   callbacks.onFinish(accumulated);
   return accumulated;
+}
+
+/** OpenAI-compatible shape: `choices[0].delta.content`. */
+export function extractOpenAIDelta(parsed: unknown): string {
+  const shape = parsed as { choices?: Array<{ delta?: { content?: string } }> };
+  return shape?.choices?.[0]?.delta?.content ?? '';
+}
+
+/**
+ * Gemini shape: `candidates[0].content.parts[].text`. Reasoning models emit
+ * chunks that carry only a thought signature and no text, so every part has to
+ * be checked rather than assuming index 0.
+ */
+export function extractGeminiDelta(parsed: unknown): string {
+  const shape = parsed as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const parts = shape?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('');
+}
+
+/** Parse an OpenAI-compatible SSE stream. Returns the full text. */
+export async function handleSSEStream(
+  response: Response,
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal
+): Promise<string> {
+  return readSSE(response, extractOpenAIDelta, callbacks, signal);
+}
+
+/** Parse a Gemini `streamGenerateContent` SSE stream. Returns the full text. */
+export async function handleGeminiSSEStream(
+  response: Response,
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal
+): Promise<string> {
+  return readSSE(response, extractGeminiDelta, callbacks, signal);
 }

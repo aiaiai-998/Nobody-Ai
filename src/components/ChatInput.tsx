@@ -354,8 +354,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       </div>
 
       <p className="text-[11px] text-center text-slate-500 mt-2">
-        Kian AI routes to free open-weight models via OpenRouter and Groq · images, PDFs and text
-        files welcome
+        Kian AI routes across free Gemini, Groq and OpenRouter models · images, PDFs and text files
+        welcome
       </p>
     </div>
   );

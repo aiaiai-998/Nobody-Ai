@@ -61,6 +61,7 @@ const BASE_SETTINGS: AppSettings = {
   activePersonaId: 'general',
   openRouterApiKey: '',
   groqApiKey: '',
+  geminiApiKey: '',
   temperature: 0.7,
   maxTokens: 2048,
   autoSpeech: false,

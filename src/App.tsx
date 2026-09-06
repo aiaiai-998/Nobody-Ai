@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   activePersonaId: SYSTEM_PERSONAS[0].id,
   openRouterApiKey: '',
   groqApiKey: '',
+  geminiApiKey: '',
   temperature: 0.7,
   maxTokens: 2048,
   autoSpeech: false,
@@ -69,17 +70,17 @@ export const App: React.FC = () => {
           role: 'assistant',
           content: `👋 **Welcome to Kian AI**
 
-A chat client for free, open-weight models served by **OpenRouter** and **Groq**.
+A chat client for free models served by **Google AI Studio**, **Groq** and **OpenRouter**.
 
 ### Getting started
 1. Open **Settings** (⚙️) in the sidebar.
-2. Paste a free API key — [OpenRouter](https://openrouter.ai/keys) or [Groq](https://console.groq.com/keys). Both issue free keys.
-3. Pick a model in the top bar and send a message.
+2. Paste a free API key — [Gemini](https://aistudio.google.com/app/apikey), [Groq](https://console.groq.com/keys) or [OpenRouter](https://openrouter.ai/keys). All three are free with no card.
+3. Leave the model on **Auto** and send a message.
 
 ### What to expect
 - **Real streaming** from the model you select.
 - **Honest errors** — if a key is missing or a model is rate-limited you get told plainly, rather than being handed a fake answer.
-- **Live model list** — OpenRouter's current \`:free\` catalog is fetched at startup, so retired models don't strand you.
+- **Three providers, stacked quotas** — Gemini, Groq and OpenRouter each have their own free allowance, and Auto walks all of them.
 - **Voice & speech** — 🎤 to dictate, 🔊 to hear a reply.
 - **Scripted Offline Demo** — a clearly-labelled non-AI mode for exercising the UI with no key and no network.
 
@@ -230,7 +231,9 @@ Your keys and chat history stay in this browser's local storage.`,
 
     // No key and not the offline demo: guide the user instead of failing.
     const wantsRealModel = !normalizeModelId(settings.activeModelId).startsWith('offline/');
-    const hasAnyKey = Boolean(settings.openRouterApiKey?.trim() || settings.groqApiKey?.trim());
+    const hasAnyKey = Boolean(
+      settings.openRouterApiKey?.trim() || settings.groqApiKey?.trim() || settings.geminiApiKey?.trim()
+    );
     if (wantsRealModel && !hasAnyKey) {
       setIsSetupOpen(true);
       return;
@@ -435,8 +438,10 @@ Your keys and chat history stay in this browser's local storage.`,
         isOpen={isSetupOpen}
         openRouterApiKey={settings.openRouterApiKey}
         groqApiKey={settings.groqApiKey}
+        geminiApiKey={settings.geminiApiKey}
         onSaveOpenRouterKey={(key) => handleUpdateSettings({ openRouterApiKey: key })}
         onSaveGroqKey={(key) => handleUpdateSettings({ groqApiKey: key })}
+        onSaveGeminiKey={(key) => handleUpdateSettings({ geminiApiKey: key })}
         onDone={() => setIsSetupOpen(false)}
         onSkip={() => setIsSetupOpen(false)}
       />

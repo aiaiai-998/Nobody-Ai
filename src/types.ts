@@ -36,7 +36,7 @@ export interface ChatSession {
 }
 
 /** Which upstream service actually runs the inference. */
-export type ModelProvider = 'Auto' | 'OpenRouter' | 'Groq' | 'Offline demo';
+export type ModelProvider = 'Auto' | 'OpenRouter' | 'Groq' | 'Gemini' | 'Offline demo';
 
 export interface AIModel {
   /**
@@ -73,6 +73,7 @@ export interface AppSettings {
   activePersonaId: string;
   openRouterApiKey: string;
   groqApiKey: string;
+  geminiApiKey: string;
   temperature: number;
   maxTokens: number;
   autoSpeech: boolean;

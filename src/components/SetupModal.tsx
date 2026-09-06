@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import { Key, ExternalLink, Check, ArrowRight, Info, X } from 'lucide-react';
 
+type ProviderTab = 'gemini' | 'groq' | 'openrouter';
+
 interface SetupModalProps {
   isOpen: boolean;
   openRouterApiKey: string;
   groqApiKey: string;
+  geminiApiKey: string;
   onSaveOpenRouterKey: (key: string) => void;
   onSaveGroqKey: (key: string) => void;
+  onSaveGeminiKey: (key: string) => void;
   onDone: () => void;
   onSkip: () => void;
 }
@@ -20,47 +24,71 @@ export const SetupModal: React.FC<SetupModalProps> = ({
   isOpen,
   openRouterApiKey,
   groqApiKey,
+  geminiApiKey,
   onSaveOpenRouterKey,
   onSaveGroqKey,
+  onSaveGeminiKey,
   onDone,
   onSkip,
 }) => {
   const [orDraft, setOrDraft] = useState(openRouterApiKey);
   const [groqDraft, setGroqDraft] = useState(groqApiKey);
-  const [active, setActive] = useState<'openrouter' | 'groq'>('openrouter');
+  const [geminiDraft, setGeminiDraft] = useState(geminiApiKey);
+  const [active, setActive] = useState<ProviderTab>('gemini');
 
   if (!isOpen) return null;
 
-  const hasAnyKey = Boolean(orDraft.trim() || groqDraft.trim());
+  const hasAnyKey = Boolean(orDraft.trim() || groqDraft.trim() || geminiDraft.trim());
 
   const handleDone = () => {
     onSaveOpenRouterKey(orDraft.trim());
     onSaveGroqKey(groqDraft.trim());
+    onSaveGeminiKey(geminiDraft.trim());
     onDone();
   };
 
-  const providerCopy =
-    active === 'openrouter'
-      ? {
-          label: 'OpenRouter',
-          url: 'https://openrouter.ai/keys',
-          placeholder: 'sk-or-v1-...',
-          tint: 'text-purple-300',
-          border: 'focus:border-purple-500',
-          blurb:
-            'Sign in with email or GitHub — no card. One key unlocks every free model here, ' +
-            'including the vision models needed for images.',
-        }
-      : {
-          label: 'Groq',
-          url: 'https://console.groq.com/keys',
-          placeholder: 'gsk_...',
-          tint: 'text-cyan-300',
-          border: 'focus:border-cyan-500',
-          blurb:
-            'Sign in with email, GitHub or Google — no card. Groq is the fastest option and ' +
-            'its free limit is per model, so it stacks well with OpenRouter.',
-        };
+  const COPY: Record<
+    ProviderTab,
+    { label: string; url: string; placeholder: string; tint: string; border: string; blurb: string }
+  > = {
+    gemini: {
+      label: 'Gemini',
+      url: 'https://aistudio.google.com/app/apikey',
+      placeholder: 'AIza...',
+      tint: 'text-emerald-300',
+      border: 'focus:border-emerald-500',
+      blurb:
+        'Sign in with a Google account — no card. The largest free quota of the three, and it ' +
+        'reads images. Note that Google may use free-tier prompts to improve its products.',
+    },
+    groq: {
+      label: 'Groq',
+      url: 'https://console.groq.com/keys',
+      placeholder: 'gsk_...',
+      tint: 'text-cyan-300',
+      border: 'focus:border-cyan-500',
+      blurb:
+        'Sign in with email, GitHub or Google — no card. The fastest responses, and its free ' +
+        'limit is per model, so adding several Groq models stacks several daily quotas.',
+    },
+    openrouter: {
+      label: 'OpenRouter',
+      url: 'https://openrouter.ai/keys',
+      placeholder: 'sk-or-v1-...',
+      tint: 'text-purple-300',
+      border: 'focus:border-purple-500',
+      blurb:
+        'Sign in with email or GitHub — no card. One key unlocks the widest range of open models. ' +
+        'Its free tier is the smallest of the three at 50 requests/day.',
+    },
+  };
+
+  const providerCopy = COPY[active];
+  const drafts: Record<ProviderTab, string> = {
+    gemini: geminiDraft,
+    groq: groqDraft,
+    openrouter: orDraft,
+  };
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -88,8 +116,8 @@ export const SetupModal: React.FC<SetupModalProps> = ({
         {/* Body */}
         <div className="p-5 space-y-4">
           {/* Provider switch */}
-          <div className="grid grid-cols-2 gap-2">
-            {(['openrouter', 'groq'] as const).map((id) => (
+          <div className="grid grid-cols-3 gap-2">
+            {(['gemini', 'groq', 'openrouter'] as const).map((id) => (
               <button
                 key={id}
                 onClick={() => setActive(id)}
@@ -99,8 +127,8 @@ export const SetupModal: React.FC<SetupModalProps> = ({
                     : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {id === 'openrouter' ? 'OpenRouter' : 'Groq'}
-                {(id === 'openrouter' ? orDraft : groqDraft).trim() && (
+                {COPY[id].label}
+                {drafts[id].trim() && (
                   <Check size={12} className="inline ml-1.5 text-emerald-400" />
                 )}
               </button>
@@ -130,10 +158,12 @@ export const SetupModal: React.FC<SetupModalProps> = ({
             </label>
             <input
               type="password"
-              value={active === 'openrouter' ? orDraft : groqDraft}
-              onChange={(e) =>
-                active === 'openrouter' ? setOrDraft(e.target.value) : setGroqDraft(e.target.value)
-              }
+              value={drafts[active]}
+              onChange={(e) => {
+                if (active === 'openrouter') setOrDraft(e.target.value);
+                else if (active === 'groq') setGroqDraft(e.target.value);
+                else setGeminiDraft(e.target.value);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && hasAnyKey) handleDone();
               }}
@@ -148,9 +178,9 @@ export const SetupModal: React.FC<SetupModalProps> = ({
             <span>
               Your key is stored only in this browser's local storage and sent directly to{' '}
               {providerCopy.label}'s own API — never to a middleman. Free tiers are rate-limited:
-              OpenRouter allows 50 requests/day (1,000 after a one-time $10 credit purchase) and
-              Groq caps each model separately. Pick <strong>Auto</strong> in the model selector to
-              use every model you have a key for.
+              Gemini and Groq both give over a thousand requests a day, OpenRouter 50. Adding more
+              than one provider stacks their quotas. Pick <strong>Auto</strong> in the model
+              selector to use every model you have a key for.
             </span>
           </div>
         </div>

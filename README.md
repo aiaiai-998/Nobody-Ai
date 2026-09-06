@@ -1,8 +1,9 @@
 # 🤖 Kian AI — a chat client for free open-weight models
 
-A React + TypeScript chat UI that talks to open-weight models through
-[OpenRouter](https://openrouter.ai) and [Groq](https://console.groq.com). Both
-providers issue free API keys.
+A React + TypeScript chat UI that talks to free models through **Google AI
+Studio (Gemini)**, [**Groq**](https://console.groq.com) and
+[**OpenRouter**](https://openrouter.ai). All three issue free API keys with no
+credit card.
 
 ---
 
@@ -18,8 +19,9 @@ it:
 - **Scripted Offline Demo** is a clearly-labelled non-AI mode for exercising the
   UI with no network and no key. It is a rule-based template, not a model.
 
-Get a free key: [OpenRouter keys](https://openrouter.ai/keys) ·
-[Groq keys](https://console.groq.com/keys). Paste it in **Settings (⚙️)**.
+Get a free key: [Gemini](https://aistudio.google.com/app/apikey) ·
+[Groq](https://console.groq.com/keys) ·
+[OpenRouter](https://openrouter.ai/keys). Paste it in **Settings (⚙️)**.
 
 ---
 
@@ -31,8 +33,9 @@ Kian AI.
 
 | Provider | Free tier ceiling | Notes |
 |---|---|---|
+| **Gemini** (Google AI Studio) | ~**1,000–1,500 requests/day** on Flash-Lite, ~250/day on Flash | Largest free quota here. 1M-token context, reads images. Google may use free-tier prompts to train, and the free tier is not available for serving users in the EU/EEA/UK/Switzerland. |
+| **Groq** | ~30 requests/minute + a per-model daily cap | Chat models sit around **1,000 requests/day** *each*, so several Groq models stack. Fastest responses. |
 | **OpenRouter** | **50 requests/day**, 20 requests/minute | Rises to **1,000/day** permanently once the account has ever bought $10 of credits. The 20/min cap never changes. |
-| **Groq** | ~30 requests/minute + a per-model daily cap | Chat models sit around **1,000 requests/day**; some entry-level models are higher. Varies by model — check the console for live values. |
 
 ### Getting the most out of it: **Auto** mode
 
@@ -40,17 +43,21 @@ Pick **"Auto — use every free model"** in the model selector. Instead of dying
 when one model hits its limit, Kian walks every free model you have a key for
 and moves on:
 
-- **Groq first**, because its free caps are *per model* (~1,000 requests/day
-  each), so spreading across GPT-OSS 120B, GPT-OSS 20B, Qwen 3.6 and Kimi K2
-  stacks several independent daily pools.
-- **Then OpenRouter**, as a separate provider with its own quota.
+The order is chosen by quota size, largest first:
+
+1. **Groq** — free caps are *per model* (~1,000 requests/day each), so GPT-OSS
+   120B, GPT-OSS 20B, Qwen 3.6 and Kimi K2 stack into several independent pools.
+2. **Gemini** — a second provider with its own generous daily allowance.
+3. **OpenRouter** — the tightest at 50/day, so it is drained last.
+
+That is 12 free models in the chain with all three keys configured.
 - It fails over on 429 / 404 / 5xx and **stops** on 401 (a bad key fails
   everywhere — no point burning quota) or once a model has already started
   streaming (so your answer is never silently swapped mid-sentence).
 - The message badge shows which model actually answered, marked `(failover)`.
 
-With both keys this turns a 50-request ceiling into a few thousand per day. It
-is still finite — it just takes a lot longer to reach.
+With all three keys this turns a 50-request ceiling into several thousand
+requests per day. It is still finite — it just takes a lot longer to reach.
 
 Things worth knowing before you rely on it:
 
@@ -107,10 +114,10 @@ Attached text is capped at 24,000 characters, shared across all documents, so
 one huge PDF cannot blow the context window. A scanned image-only PDF has no
 text layer — Kian says so and suggests attaching it as an image instead.
 
-Vision depends on the model, not the app: the live OpenRouter catalog reports
-each model's `input_modalities`, and the curated presets flag the ones known to
-accept images. If none of your available models take images, you are told
-plainly rather than having the attachment silently dropped.
+Vision depends on the model, not the app. Gemini reads images natively; on
+OpenRouter the live catalog reports each model's `input_modalities`, with
+curated flags as a fallback. If none of your available models take images, you
+are told plainly rather than having the attachment silently dropped.
 
 ---
 
@@ -183,7 +190,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 53 tests against the real service modules with a stubbed
+`npm test` runs 66 tests against the real service modules with a stubbed
 `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration
@@ -195,6 +202,10 @@ npm run typecheck  # build typecheck + test-file typecheck
 - **`failover.test.ts`** — chain construction per available key; failover on
   429; refusing to switch model once output has streamed; not retrying a 401;
   image routing to vision models and the resulting `content` array.
+- **`gemini.test.ts`** — Gemini's different wire format: `systemInstruction`,
+  the `assistant` → `model` role mapping, `inline_data` image parts, the
+  `candidates[0].content.parts` SSE shape including signature-only chunks that
+  carry no text, the `x-goog-api-key` header, and cross-provider failover.
 - **`attachments.test.ts`** — mime classification, document inlining, the
   24,000-character budget across multiple files, image parts only for vision
   models, and real text extraction from a committed PDF fixture.

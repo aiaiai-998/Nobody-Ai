@@ -49,7 +49,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
                 <Key size={14} className="text-cyan-400" />
-                Groq API Key (required for Groq models)
+                Groq API Key
               </label>
               <a
                 href="https://console.groq.com/keys"
@@ -74,7 +74,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center justify-between">
               <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
                 <Key size={14} className="text-purple-400" />
-                OpenRouter API Key (required for OpenRouter models)
+                OpenRouter API Key
               </label>
               <a
                 href="https://openrouter.ai/keys"
@@ -92,6 +92,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               placeholder="sk-or-v1-..."
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-purple-500"
             />
+          </div>
+
+          {/* Gemini API Key */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                <Key size={14} className="text-emerald-400" />
+                Gemini API Key (Google AI Studio — largest free quota)
+              </label>
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1"
+              >
+                Get Free Key <ExternalLink size={10} />
+              </a>
+            </div>
+            <input
+              type="password"
+              value={settings.geminiApiKey}
+              onChange={(e) => onUpdateSettings({ geminiApiKey: e.target.value })}
+              placeholder="AIza..."
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-emerald-500"
+            />
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              Note: Google may use free-tier prompts to improve its products, and the free tier is
+              not available for serving users in the EU/EEA/UK/Switzerland.
+            </p>
           </div>
 
           {/* Temperature Slider */}
