@@ -59,7 +59,8 @@ export const SetupModal: React.FC<SetupModalProps> = ({
       border: 'focus:border-emerald-500',
       blurb:
         'Sign in with a Google account — no card. The largest free quota of the three, and it ' +
-        'reads images. Note that Google may use free-tier prompts to improve its products.',
+        'reads images. Paste whatever Google gives you: older keys start AIza, newer ones start ' +
+        'AQ. — both work. Note that Google may use free-tier prompts to improve its products.',
     },
     groq: {
       label: 'Groq',

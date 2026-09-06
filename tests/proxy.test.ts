@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import handler, { resolveUpstream } from '../api/chat';
-import { buildModelChain, sendChatMessage } from '../src/services/aiService';
+import { buildModelChain, hasUsableCredential, sendChatMessage } from '../src/services/aiService';
 import { BASE_SETTINGS, HISTORY, jsonResponse, recorder, sseResponse, withFetch } from './helpers';
 
 const SSE_OK = [
@@ -350,5 +350,32 @@ describe('handler (deployed function)', () => {
     );
     assert.equal(upstreamAuth, KEY);
     assert.doesNotMatch(res.chunks.join('') + res.body, /attacker-key/);
+  });
+});
+
+/**
+ * The UI refuses to send unless this returns true. It used to be a separate
+ * copy of the check in App.tsx that ignored proxyUrl, so a proxy-only
+ * deployment popped the setup prompt and never reached the proxy. Keeping one
+ * definition is what stops that drifting again.
+ */
+describe('hasUsableCredential (the setup gate)', () => {
+  it('is false with no key and no proxy', () => {
+    assert.equal(hasUsableCredential(BASE_SETTINGS), false);
+  });
+
+  it('is true for any one of the three keys', () => {
+    assert.equal(hasUsableCredential({ ...BASE_SETTINGS, geminiApiKey: 'AIzaX' }), true);
+    assert.equal(hasUsableCredential({ ...BASE_SETTINGS, groqApiKey: 'gsk_x' }), true);
+    assert.equal(hasUsableCredential({ ...BASE_SETTINGS, openRouterApiKey: 'sk-or-x' }), true);
+  });
+
+  it('is true on a proxy alone, with no keys at all', () => {
+    assert.equal(hasUsableCredential({ ...BASE_SETTINGS, proxyUrl: '/api/chat' }), true);
+  });
+
+  it('ignores whitespace-only values', () => {
+    assert.equal(hasUsableCredential({ ...BASE_SETTINGS, geminiApiKey: '   ' }), false);
+    assert.equal(hasUsableCredential({ ...BASE_SETTINGS, proxyUrl: '   ' }), false);
   });
 });

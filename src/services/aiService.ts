@@ -128,6 +128,23 @@ export function hasProxy(settings: AppSettings): boolean {
   return Boolean(settings.proxyUrl?.trim());
 }
 
+/**
+ * Can this app reach a real model at all — either with a visitor's own key or
+ * through a deployment proxy? This is the single definition; the UI gate and
+ * the request path must agree, or the setup prompt fires for users who are
+ * already able to chat.
+ */
+export function hasUsableCredential(settings: AppSettings): boolean {
+  return (
+    hasProxy(settings) ||
+    Boolean(
+      settings.openRouterApiKey?.trim() ||
+        settings.groqApiKey?.trim() ||
+        settings.geminiApiKey?.trim()
+    )
+  );
+}
+
 function hasKeyFor(provider: ProviderId, settings: AppSettings): boolean {
   if (provider === 'offline') return true;
   return hasProxy(settings) || Boolean(keyFor(provider, settings));

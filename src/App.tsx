@@ -9,7 +9,12 @@ import { SetupModal } from './components/SetupModal';
 import type { AIModel, Attachment, Message, ChatSession, AppSettings } from './types';
 import { DEFAULT_MODELS, SYSTEM_PERSONAS } from './config/constants';
 import { STORAGE_KEY_SESSIONS, STORAGE_KEY_SETTINGS, migrateLegacyKeys } from './config/storage';
-import { fetchOpenRouterFreeModels, normalizeModelId, sendChatMessage } from './services/aiService';
+import {
+  fetchOpenRouterFreeModels,
+  hasUsableCredential,
+  normalizeModelId,
+  sendChatMessage,
+} from './services/aiService';
 
 // Runs once at import, before any state reads localStorage, so chats saved by
 // the previous build under the old key names are carried across the rename.
@@ -232,10 +237,7 @@ Your keys and chat history stay in this browser's local storage.`,
 
     // No key and not the offline demo: guide the user instead of failing.
     const wantsRealModel = !normalizeModelId(settings.activeModelId).startsWith('offline/');
-    const hasAnyKey = Boolean(
-      settings.openRouterApiKey?.trim() || settings.groqApiKey?.trim() || settings.geminiApiKey?.trim()
-    );
-    if (wantsRealModel && !hasAnyKey) {
+    if (wantsRealModel && !hasUsableCredential(settings)) {
       setIsSetupOpen(true);
       return;
     }

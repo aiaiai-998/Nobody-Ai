@@ -203,7 +203,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 85 tests against the real service and proxy modules with a
+`npm test` runs 89 tests against the real service and proxy modules with a
 stubbed `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration
