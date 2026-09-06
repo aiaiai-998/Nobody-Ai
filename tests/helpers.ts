@@ -64,6 +64,7 @@ export const BASE_SETTINGS: AppSettings = {
   openRouterApiKey: '',
   groqApiKey: '',
   geminiApiKey: '',
+  proxyUrl: '',
   temperature: 0.7,
   maxTokens: 2048,
   autoSpeech: false,

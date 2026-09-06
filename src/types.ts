@@ -74,6 +74,12 @@ export interface AppSettings {
   openRouterApiKey: string;
   groqApiKey: string;
   geminiApiKey: string;
+  /**
+   * Optional server-side proxy (see api/chat.ts). When set, requests go there
+   * and the proxy attaches the provider key, so visitors need no key of their
+   * own. Never set this to a public URL unless you own it and accept the cost.
+   */
+  proxyUrl: string;
   temperature: number;
   maxTokens: number;
   autoSpeech: boolean;

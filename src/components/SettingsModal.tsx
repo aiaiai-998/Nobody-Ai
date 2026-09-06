@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Key, Sliders, ExternalLink, ShieldCheck, Check } from 'lucide-react';
+import { Server, X, Key, Sliders, ExternalLink, ShieldCheck, Check } from 'lucide-react';
 import type { AppSettings } from '../types';
 
 interface SettingsModalProps {
@@ -120,6 +120,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <p className="text-[10px] text-slate-500 leading-relaxed">
               Note: Google may use free-tier prompts to improve its products, and the free tier is
               not available for serving users in the EU/EEA/UK/Switzerland.
+            </p>
+          </div>
+
+          {/* Server-side proxy (optional) */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+              <Server size={14} className="text-sky-400" />
+              API proxy URL (optional — key-free mode)
+            </label>
+            <input
+              type="text"
+              value={settings.proxyUrl}
+              onChange={(e) => onUpdateSettings({ proxyUrl: e.target.value })}
+              placeholder="/api/chat"
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-slate-200 focus:outline-none focus:border-sky-500"
+            />
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              Point this at a deployed copy of{' '}
+              <code className="text-slate-400">api/chat.ts</code> and visitors need no key at all —
+              the proxy attaches yours on the server. Leave it blank to keep using your own keys
+              here. Only set it to a URL you control: it spends <em>your</em> quota, and every
+              visitor draws from the same pool, so it runs out faster than separate keys do.
             </p>
           </div>
 

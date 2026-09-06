@@ -123,9 +123,14 @@ function keyFor(provider: ProviderId, settings: AppSettings): string | undefined
   }
 }
 
+/** A configured proxy supplies keys server-side, so no client key is needed. */
+export function hasProxy(settings: AppSettings): boolean {
+  return Boolean(settings.proxyUrl?.trim());
+}
+
 function hasKeyFor(provider: ProviderId, settings: AppSettings): boolean {
   if (provider === 'offline') return true;
-  return Boolean(keyFor(provider, settings));
+  return hasProxy(settings) || Boolean(keyFor(provider, settings));
 }
 
 /** Models that only accept `max_completion_tokens` (OpenAI reasoning-style APIs). */
@@ -517,9 +522,12 @@ async function attemptModel(
     };
   }
 
+  // Normalise an empty setting to undefined: `??` only falls back on
+  // null/undefined, so a blank proxyUrl would otherwise win over the real URL.
+  const proxyUrl = settings.proxyUrl?.trim() || undefined;
   const apiKey = keyFor(route.provider, settings);
 
-  if (!apiKey) {
+  if (!apiKey && !proxyUrl) {
     // `offline` already returned above, so the lookup is always defined.
     const keyUrl = PROVIDER_KEY_URL[route.provider];
     return {
@@ -535,15 +543,18 @@ async function attemptModel(
   }
 
   // Gemini authenticates with its own header and has no OpenRouter-style
-  // attribution headers.
+  // attribution headers. When a proxy is configured it holds the key instead,
+  // so nothing is sent from the browser.
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (route.provider === 'gemini') {
-    headers['x-goog-api-key'] = apiKey;
+  if (proxyUrl) {
+    // No auth header at all: the proxy owns the credential.
+  } else if (route.provider === 'gemini') {
+    headers['x-goog-api-key'] = apiKey as string;
   } else {
     headers.Authorization = `Bearer ${apiKey}`;
   }
 
-  if (route.provider === 'openrouter') {
+  if (!proxyUrl && route.provider === 'openrouter') {
     const referer = getReferer();
     if (referer) headers['HTTP-Referer'] = referer;
     headers['X-Title'] = 'Kian AI';
@@ -573,12 +584,19 @@ async function attemptModel(
     }
   }
 
+  // Through a proxy the provider and slug travel in the body; the proxy is
+  // what decides the real endpoint and attaches the key.
+  const requestUrl = proxyUrl ?? url;
+  const requestBody = proxyUrl
+    ? { provider: route.provider, model: route.model, payload }
+    : payload;
+
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetch(requestUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body: JSON.stringify(requestBody),
       signal,
     });
   } catch (err) {

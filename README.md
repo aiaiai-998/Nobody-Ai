@@ -16,6 +16,9 @@ it:
 - With a key → you get genuine streaming responses from the model you picked.
 - Without a key → the app tells you plainly that nothing was sent, and points
   you at the key page. It will not manufacture a plausible-looking answer.
+- **Behind a proxy** → if the deployment has [`api/chat.ts`](api/chat.ts)
+  running with a key in its environment, visitors need no key at all. See
+  [Key-free mode](#-key-free-mode-running-a-proxy).
 - **Scripted Offline Demo** is a clearly-labelled non-AI mode for exercising the
   UI with no network and no key. It is a rule-based template, not a model.
 
@@ -190,8 +193,8 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 66 tests against the real service modules with a stubbed
-`fetch` and synthetic SSE streams. Coverage:
+`npm test` runs 83 tests against the real service and proxy modules with a
+stubbed `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration
   of retired ids; SSE parsing across chunk boundaries, CRLF, comments and a
@@ -209,6 +212,10 @@ npm run typecheck  # build typecheck + test-file typecheck
 - **`attachments.test.ts`** — mime classification, document inlining, the
   24,000-character budget across multiple files, image parts only for vision
   models, and real text extraction from a committed PDF fixture.
+- **`proxy.test.ts`** — the server-side proxy: provider allow-listing, model-id
+  validation (including rejecting `../` that `encodeURIComponent` would leave
+  intact), a missing key reported without naming any variable, and the client
+  side sending no credential when a proxy is configured.
 - **`storage.test.ts`** — the localStorage key migration.
 
 pdf.js itself is only exercised through its Node-compatible build in that last
@@ -219,10 +226,48 @@ file; the browser worker wiring is not covered by the suite.
 ## 🚀 Deploy
 
 Any static host works — Vercel, Netlify, Cloudflare Pages. `npm run build`
-emits `dist/`; there is no server component.
+emits `dist/`.
 
 Keys are entered by each visitor and stored in their own browser, so a public
 deployment costs nothing to run and never holds anyone's key.
+
+---
+
+## 🔑 Key-free mode: running a proxy
+
+If you want visitors to land on the site and chat with **no setup at all**,
+deploy [`api/chat.ts`](api/chat.ts) and give it your key as a server
+environment variable.
+
+```
+OPENROUTER_API_KEY=sk-or-...   # any subset
+GROQ_API_KEY=gsk-...
+GEMINI_API_KEY=AIza...
+```
+
+Then set **Settings (⚙️) → API proxy URL** to `/api/chat`. Every visitor's
+request is relayed through the function, which attaches your key on the server.
+
+### Why not just ship a default key in the app?
+
+Because it is not hidden. Vite inlines `VITE_*` values as string literals into
+the JavaScript it emits, so any key you compile in is readable by anyone who
+opens DevTools and will be spent by strangers. Verified on this repo: a
+`VITE_`-prefixed key ended up verbatim in `dist/assets/index-*.js`.
+
+### The trade-off, stated plainly
+
+A proxy makes setup instant but it does **not** make the free tiers unlimited —
+it makes them run out *faster*, because every visitor now draws on your single
+pool instead of their own. Free-tier quotas are a few hundred requests a day.
+That is roughly the first few dozen users, after which you either pay per token
+or everyone gets a 429.
+
+The proxy also spends *your* money and carries *your* provider terms. The
+Gemini free tier may be used by Google to improve its products and is not
+available for serving users in the EU/EEA/UK/Switzerland. Read your provider's
+terms before opening this to the public, and consider putting a rate limit or
+an allow-list in front of it.
 
 ---
 
