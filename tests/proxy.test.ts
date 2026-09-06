@@ -11,6 +11,10 @@ import handler, {
 } from '../api/chat';
 import { buildModelChain, hasUsableCredential, sendChatMessage } from '../src/services/aiService';
 import { BASE_SETTINGS, HISTORY, jsonResponse, recorder, sseResponse, withFetch } from './helpers';
+import { resetExhaustionTracker } from '../src/services/aiService';
+
+// Quota cooldowns are session-wide; keep tests independent.
+beforeEach(() => resetExhaustionTracker());
 
 const SSE_OK = [
   'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',

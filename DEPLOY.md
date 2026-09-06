@@ -57,6 +57,12 @@ person cannot drain the whole pool before others get a turn.
 Follow steps 2–3 in section B below (GitHub, then import into Vercel). The
 build is identical; only the environment variables differ.
 
+A model that runs out is remembered for the session, so the next message goes
+straight to one that still has quota instead of rediscovering four dead ends the
+slow way. Cooldowns escalate: a first 429 is treated as a per-minute rate limit
+and retried in 60 seconds, a third as an empty daily quota and skipped until
+midnight UTC.
+
 ## A4. What happens at the end of the day
 
 When every provider is exhausted the visitor gets a plain-language message

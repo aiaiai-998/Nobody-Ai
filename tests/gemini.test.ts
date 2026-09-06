@@ -1,5 +1,10 @@
-import { test } from 'node:test';
+import { beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { resetExhaustionTracker } from '../src/services/aiService';
+
+// The quota-cooldown tracker is session-wide, so a 429 in one test would
+// otherwise make a later test skip that model.
+beforeEach(() => resetExhaustionTracker());
 
 import {
   buildGeminiParts,

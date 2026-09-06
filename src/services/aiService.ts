@@ -676,6 +676,74 @@ async function attemptModel(
 
 /* ---------- entry point ---------- */
 
+/* ---------- quota cooldowns ---------- */
+
+/**
+ * Escalating cooldown after a 429. The first one is likely a per-minute rate
+ * limit, which clears in seconds; by the third, the daily quota is gone and
+ * retrying is pointless until it resets. Treating them alike either wastes a
+ * minute on a dead model or gives up on a model that only needed a breather.
+ */
+const EXHAUSTION_STEPS = [60_000, 600_000];
+
+/** Milliseconds until the next UTC midnight, when daily quotas reset. */
+export function msUntilUtcMidnight(now: number): number {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - now;
+}
+
+export interface ExhaustionTracker {
+  mark(modelId: string, now: number): void;
+  isBlocked(modelId: string, now: number): boolean;
+  clearModel(modelId: string): void;
+  reset(): void;
+}
+
+/**
+ * Remembers which models have run out so the next message does not spend four
+ * round trips rediscovering it. Without this the app degrades before it
+ * breaks: once Groq is exhausted every message still walks the whole Groq
+ * list, eating latency on models that cannot possibly answer.
+ */
+export function createExhaustionTracker(): ExhaustionTracker {
+  const strikes = new Map<string, number>();
+  const blockedUntil = new Map<string, number>();
+
+  return {
+    mark(modelId, now) {
+      const n = (strikes.get(modelId) ?? 0) + 1;
+      strikes.set(modelId, n);
+      const window = n - 1 < EXHAUSTION_STEPS.length ? EXHAUSTION_STEPS[n - 1] : msUntilUtcMidnight(now);
+      blockedUntil.set(modelId, now + window);
+    },
+    isBlocked(modelId, now) {
+      const until = blockedUntil.get(modelId);
+      if (until === undefined) return false;
+      if (now >= until) {
+        blockedUntil.delete(modelId);
+        return false;
+      }
+      return true;
+    },
+    clearModel(modelId) {
+      strikes.delete(modelId);
+      blockedUntil.delete(modelId);
+    },
+    reset() {
+      strikes.clear();
+      blockedUntil.clear();
+    },
+  };
+}
+
+/** Session-wide: a model that ran out stays skipped for this browser tab. */
+const exhaustion = createExhaustionTracker();
+
+/** Lets tests start from a clean slate; the browser never calls this. */
+export function resetExhaustionTracker(): void {
+  exhaustion.reset();
+}
+
 export async function sendChatMessage(
   messages: Message[],
   systemPrompt: string,
@@ -739,11 +807,17 @@ export async function sendChatMessage(
     }
   }
 
+  // Skip models already known to be out of quota. If everything is cooling
+  // down, try anyway — a slow maybe is better than a refusal.
+  const now = Date.now();
+  const rested = chain.filter((id) => !exhaustion.isBlocked(id, now));
+  const usable = rested.length > 0 ? rested : chain;
+
   const failures: string[] = [];
   let lastError: Error | null = null;
 
-  for (let i = 0; i < chain.length; i++) {
-    const modelId = chain[i];
+  for (let i = 0; i < usable.length; i++) {
+    const modelId = usable[i];
     if (signal?.aborted) return;
 
     if (i > 0) callbacks.onModelUsed?.(modelId);
@@ -761,6 +835,8 @@ export async function sendChatMessage(
     );
 
     if (result.ok) {
+      // It answered, so it is not out of quota — drop any earlier strikes.
+      exhaustion.clearModel(modelId);
       callbacks.onFinish(result.text);
       return;
     }
@@ -771,7 +847,12 @@ export async function sendChatMessage(
 
     // Only fail over when nothing has been shown to the user yet — otherwise a
     // half-written answer would be silently replaced by a different model's.
-    if (!result.retryable || result.streamed || i === chain.length - 1) break;
+    // A 429 means this model is out; remember it so the next message skips it.
+    if (result.error instanceof ApiError && result.error.status === 429) {
+      exhaustion.mark(modelId, Date.now());
+    }
+
+    if (!result.retryable || result.streamed || i === usable.length - 1) break;
 
     failures.push(modelId);
   }

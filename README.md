@@ -203,7 +203,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 104 tests against the real service and proxy modules with a
+`npm test` runs 110 tests against the real service and proxy modules with a
 stubbed `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration
@@ -214,7 +214,9 @@ stubbed `fetch` and synthetic SSE streams. Coverage:
   vision detection from `input_modalities`.
 - **`failover.test.ts`** — chain construction per available key; failover on
   429; refusing to switch model once output has streamed; not retrying a 401;
-  image routing to vision models and the resulting `content` array.
+  image routing to vision models and the resulting `content` array; and the
+  quota cooldowns that stop a message re-walking models already known to be
+  empty.
 - **`gemini.test.ts`** — Gemini's different wire format: `systemInstruction`,
   the `assistant` → `model` role mapping, `inline_data` image parts, the
   `candidates[0].content.parts` SSE shape including signature-only chunks that

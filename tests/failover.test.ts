@@ -1,5 +1,14 @@
-import { test } from 'node:test';
+import { beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  createExhaustionTracker,
+  msUntilUtcMidnight,
+  resetExhaustionTracker,
+} from '../src/services/aiService';
+
+// The quota-cooldown tracker is session-wide, so a 429 in one test would
+// otherwise make a later test skip that model.
+beforeEach(() => resetExhaustionTracker());
 
 import { buildModelChain, sendChatMessage } from '../src/services/aiService';
 import { AUTO_MODEL_ID } from '../src/config/constants';
@@ -334,4 +343,123 @@ test('a long image history is trimmed before it reaches the provider', async () 
   assert.equal(last.filter((p) => p.type === 'image_url').length, 2);
   const first = sent[1].content;
   assert.equal(typeof first, 'string', 'oldest message degraded to plain text');
+});
+
+/* ---------- quota cooldowns ---------- */
+
+test('a first 429 cools a model down briefly, then lets it back in', () => {
+  const t = createExhaustionTracker();
+  const now = 1_000_000;
+  t.mark('groq/x', now);
+  assert.equal(t.isBlocked('groq/x', now + 1), true);
+  assert.equal(t.isBlocked('groq/x', now + 59_999), true);
+  assert.equal(t.isBlocked('groq/x', now + 60_001), false, 'an RPM limit clears in a minute');
+});
+
+test('cooldowns escalate, because a third 429 means the day is gone', () => {
+  const t = createExhaustionTracker();
+  const now = 1_000_000;
+  t.mark('groq/x', now); // 60s
+  assert.equal(t.isBlocked('groq/x', now + 61_000), false, 'the short window has passed');
+
+  t.mark('groq/x', now + 62_000); // 10 min, starting from the second strike
+  assert.equal(t.isBlocked('groq/x', now + 120_000), true, 'past 60s but still blocked: it escalated');
+  assert.equal(t.isBlocked('groq/x', now + 62_000 + 601_000), false, 'and it does clear eventually');
+
+  t.mark('groq/x', now + 63_000); // rest of the UTC day
+  assert.equal(t.isBlocked('groq/x', now + 700_000), true, 'daily quota will not come back soon');
+});
+
+test('a model that answers again has its strikes forgiven', () => {
+  const t = createExhaustionTracker();
+  const now = 1_000_000;
+  t.mark('groq/x', now);
+  t.mark('groq/x', now + 1);
+  t.clearModel('groq/x');
+  assert.equal(t.isBlocked('groq/x', now + 2), false);
+  t.mark('groq/x', now + 3);
+  assert.equal(t.isBlocked('groq/x', now + 4_000), true, 'a fresh strike blocks it again');
+  // Under the 10-minute window this would still be blocked; forgiven, it is not.
+  assert.equal(t.isBlocked('groq/x', now + 63_000 + 60_000), false, 'back to the short window');
+});
+
+test('msUntilUtcMidnight counts down to the next UTC day boundary', () => {
+  // 2026-01-01T23:59:00Z -> 60s left
+  const t = Date.UTC(2026, 0, 1, 23, 59, 0);
+  assert.equal(msUntilUtcMidnight(t), 60_000);
+  // exactly midnight -> a full day
+  assert.equal(msUntilUtcMidnight(Date.UTC(2026, 0, 1, 0, 0, 0)), 86_400_000);
+  // rolls over month ends
+  assert.equal(msUntilUtcMidnight(Date.UTC(2026, 0, 31, 12, 0, 0)), 43_200_000);
+});
+
+test('the next message skips a model that already ran out', async () => {
+  // First message: the preferred Groq model is out of quota, so the chain
+  // moves on. Second message must not rediscover that the hard way.
+  const first = countingFetch(async (call) =>
+    call === 0
+      ? jsonResponse({ error: { message: 'slow down' } }, 429)
+      : sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', 'data: [DONE]\n\n'])
+  );
+  const rec1 = recorder();
+  await withFetch(first.impl, () =>
+    sendChatMessage(
+      [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 }],
+      'You are helpful.',
+      { ...BOTH_KEYS, activeModelId: AUTO_MODEL_ID },
+      rec1.callbacks,
+      { knownModels: CATALOG }
+    )
+  );
+  assert.equal(first.calls, 2, 'first message tried the dead model, then succeeded');
+  assert.equal(rec1.finished, 'ok');
+
+  const second = countingFetch(async () =>
+    sseResponse(['data: {"choices":[{"delta":{"content":"fast"}}]}\n\n', 'data: [DONE]\n\n'])
+  );
+  const rec2 = recorder();
+  await withFetch(second.impl, () =>
+    sendChatMessage(
+      [{ id: 'u2', role: 'user', content: 'again', timestamp: 0 }],
+      'You are helpful.',
+      { ...BOTH_KEYS, activeModelId: AUTO_MODEL_ID },
+      rec2.callbacks,
+      { knownModels: CATALOG }
+    )
+  );
+  assert.equal(second.calls, 1, 'the exhausted model was skipped entirely');
+  assert.equal(second.urls[0], 'https://api.groq.com/openai/v1/chat/completions');
+  assert.equal(rec2.finished, 'fast');
+});
+
+test('when everything is cooling down it still tries rather than refusing', async () => {
+  const fetcher = countingFetch(async () =>
+    sseResponse(['data: {"choices":[{"delta":{"content":"still works"}}]}\n\n', 'data: [DONE]\n\n'])
+  );
+  const rec = recorder();
+
+  // Burn every model in the chain first.
+  const burn = countingFetch(async () => jsonResponse({ error: { message: 'slow down' } }, 429));
+  await withFetch(burn.impl, () =>
+    sendChatMessage(
+      [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 }],
+      'You are helpful.',
+      { ...BOTH_KEYS, activeModelId: AUTO_MODEL_ID },
+      recorder().callbacks,
+      { knownModels: CATALOG }
+    )
+  );
+  assert.ok(burn.calls >= 2, 'expected the chain to be exhausted');
+
+  await withFetch(fetcher.impl, () =>
+    sendChatMessage(
+      [{ id: 'u2', role: 'user', content: 'hi again', timestamp: 0 }],
+      'You are helpful.',
+      { ...BOTH_KEYS, activeModelId: AUTO_MODEL_ID },
+      rec.callbacks,
+      { knownModels: CATALOG }
+    )
+  );
+  assert.ok(fetcher.calls > 0, 'must attempt something, not silently refuse');
+  assert.equal(rec.finished, 'still works');
 });
