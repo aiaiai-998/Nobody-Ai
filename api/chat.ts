@@ -191,6 +191,85 @@ export function createLimiter(limits: RateLimits) {
   };
 }
 
+export interface SharedLimiterConfig {
+  url: string;
+  token: string;
+}
+
+/** Upstash Redis REST endpoint, if configured. No SDK — it is a plain POST. */
+export function sharedLimiterConfig(env: Env): SharedLimiterConfig | null {
+  const url = env.UPSTASH_REDIS_REST_URL?.trim();
+  const token = env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  return url && token ? { url, token } : null;
+}
+
+interface PipelineReply {
+  result?: Array<{ result?: unknown; error?: string }>;
+  error?: string;
+}
+
+const resultNum = (reply: PipelineReply, i: number): number => {
+  const raw = reply.result?.[i]?.result;
+  return typeof raw === 'number' ? raw : Number(raw ?? 0);
+};
+
+/**
+ * Rate limits shared across every instance, so a cold start cannot reset them
+ * and a client cannot spread requests across instances to dodge the cap.
+ *
+ * One pipeline does all three windows: increment, set the TTL only if it is not
+ * already running (NX, so the window does not slide), and read the TTL back so
+ * Retry-After can be accurate.
+ */
+export function createSharedLimiter(
+  config: SharedLimiterConfig,
+  limits: RateLimits,
+  fetchImpl: (url: string, init: RequestInit) => Promise<Response>
+) {
+  const windows = [
+    { key: (ip: string) => `kian:rl:m:${ip}`, max: limits.perMinute, ttl: 60, reason: 'too many requests per minute' },
+    { key: (ip: string) => `kian:rl:d:${ip}`, max: limits.perDay, ttl: 86_400, reason: 'daily limit reached' },
+    { key: () => 'kian:rl:g', max: limits.perDayGlobal, ttl: 86_400, reason: 'daily limit reached for this service' },
+  ];
+
+  return {
+    async check(ip: string): Promise<RateVerdict | null> {
+      const pipeline: Array<[string, ...Array<string | number>]> = [];
+      for (const w of windows) {
+        const k = w.key(ip);
+        pipeline.push(['INCR', k], ['EXPIRE', k, w.ttl, 'NX'], ['TTL', k]);
+      }
+
+      let reply: PipelineReply;
+      try {
+        const res = await fetchImpl(`${config.url.replace(/\/$/, '')}/pipeline`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(pipeline),
+        });
+        reply = (await res.json()) as PipelineReply;
+      } catch {
+        // Returning null means "I could not decide" — the caller falls back to
+        // the in-memory limiter rather than dropping protection entirely.
+        return null;
+      }
+
+      for (let i = 0; i < windows.length; i++) {
+        const count = resultNum(reply, i * 3);
+        if (count > windows[i].max) {
+          const ttl = resultNum(reply, i * 3 + 2);
+          return {
+            ok: false,
+            retryAfterSeconds: ttl > 0 ? ttl : windows[i].ttl,
+            reason: windows[i].reason,
+          };
+        }
+      }
+      return { ok: true, retryAfterSeconds: 0, reason: '' };
+    },
+  };
+}
+
 /** First hop of X-Forwarded-For, falling back to the socket address. */
 export function clientIp(req: { headers?: Record<string, string | string[] | undefined>; socket?: { remoteAddress?: string } }): string {
   const fwd = req.headers?.['x-forwarded-for'];
@@ -214,7 +293,10 @@ interface Res {
   end(chunk?: Uint8Array | string): unknown;
 }
 
-const limiter = createLimiter(defaultLimits(process.env));
+const LIMITS = defaultLimits(process.env);
+const memoryLimiter = createLimiter(LIMITS);
+const sharedConfig = sharedLimiterConfig(process.env);
+const sharedLimiter = sharedConfig ? createSharedLimiter(sharedConfig, LIMITS, fetch) : null;
 
 export default async function handler(req: Req, res: Res): Promise<void> {
   if (req.method && req.method.toUpperCase() !== 'POST') {
@@ -223,7 +305,10 @@ export default async function handler(req: Req, res: Res): Promise<void> {
     return;
   }
 
-  const verdict = limiter.check(clientIp(req), Date.now());
+  const ip = clientIp(req);
+  // Shared counters when configured; if Redis is unreachable the in-memory
+  // limiter still applies rather than the endpoint going wide open.
+  const verdict = (await sharedLimiter?.check(ip)) ?? memoryLimiter.check(ip, Date.now());
   if (!verdict.ok) {
     res.statusCode = 429;
     res.setHeader('Content-Type', 'application/json');

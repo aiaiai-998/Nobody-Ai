@@ -203,7 +203,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 96 tests against the real service and proxy modules with a
+`npm test` runs 102 tests against the real service and proxy modules with a
 stubbed `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration
@@ -248,7 +248,8 @@ deployment costs nothing to run and never holds anyone's key.
 ## 🔑 Key-free mode: running a proxy
 
 Want visitors to land and chat with **no setup at all**? Deploy
-[`api/chat.ts`](api/chat.ts) with your key in its environment. The key stays on
+[`api/chat.ts`](api/chat.ts) with your key in its environment. Step-by-step
+instructions are in [**DEPLOY.md**](DEPLOY.md). The key stays on
 the server; the browser never sees it.
 
 ### What it costs
@@ -298,10 +299,15 @@ The proxy ships with fixed-window counters, defaults in `.env.example`:
 
 Exceeding one returns `429` with a `Retry-After` header.
 
-**Honest limitation:** the counters live in instance memory. On a serverless
-host they reset on cold start and are not shared between instances, so this
-stops a casual script rather than a determined one. For a hard guarantee put a
-shared store (Upstash, Redis) behind the same `clientIp()` key.
+Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (a free Upstash
+database gives you both) and the counters move to Redis, shared across every
+instance, so a cold start cannot reset them and a client cannot dodge the cap
+by spreading requests around. If Redis is unreachable the in-memory limiter
+still applies — the endpoint does not go wide open.
+
+Without those two variables the counters live in instance memory: they reset on
+cold start and are not shared, which stops a casual script rather than a
+determined one.
 
 ### Still worth knowing
 

@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import handler, { clientIp, createLimiter, defaultLimits, resolveUpstream } from '../api/chat';
+import handler, {
+  clientIp,
+  createLimiter,
+  createSharedLimiter,
+  defaultLimits,
+  resolveUpstream,
+  sharedLimiterConfig,
+} from '../api/chat';
 import { buildModelChain, hasUsableCredential, sendChatMessage } from '../src/services/aiService';
 import { BASE_SETTINGS, HISTORY, jsonResponse, recorder, sseResponse, withFetch } from './helpers';
 
@@ -464,5 +471,86 @@ describe('rate limiting', () => {
     assert.equal(last.code, 429);
     assert.ok(Number(last.retry) > 0, 'must tell the client when to come back');
     assert.match(last.body, /per minute/);
+  });
+});
+
+/** Upstash-shaped reply: every third entry is the TTL of that window. */
+function redisReply(minute: number, minuteTtl: number, day: number, dayTtl: number, global: number, globalTtl: number) {
+  return {
+    result: [
+      { result: minute }, { result: 1 }, { result: minuteTtl },
+      { result: day }, { result: 1 }, { result: dayTtl },
+      { result: global }, { result: 1 }, { result: globalTtl },
+    ],
+  };
+}
+
+describe('shared (Redis-backed) rate limiting', () => {
+  const cfg = { url: 'https://redis.example.upstash.io', token: 'upstash-token' };
+  const limits = { perMinute: 3, perDay: 10, perDayGlobal: 100 };
+
+  it('is only enabled when both Upstash variables are set', () => {
+    assert.equal(sharedLimiterConfig({}), null);
+    assert.equal(sharedLimiterConfig({ UPSTASH_REDIS_REST_URL: 'https://x' }), null);
+    assert.equal(sharedLimiterConfig({ UPSTASH_REDIS_REST_TOKEN: 't' }), null);
+    assert.deepEqual(
+      sharedLimiterConfig({ UPSTASH_REDIS_REST_URL: ' https://x ', UPSTASH_REDIS_REST_TOKEN: ' t ' }),
+      { url: 'https://x', token: 't' }
+    );
+  });
+
+  it('authenticates and increments all three windows in one pipeline', async () => {
+    let seen: { url?: string; auth?: string; cmds?: string[][] } = {};
+    const lim = createSharedLimiter(cfg, limits, async (url, init) => {
+      seen = {
+        url,
+        auth: (init.headers as Record<string, string>).Authorization,
+        cmds: JSON.parse(String(init.body)) as string[][],
+      };
+      return new Response(JSON.stringify(redisReply(1, 59, 1, 86399, 1, 86399)), { status: 200 });
+    });
+
+    const verdict = await lim.check('1.2.3.4');
+    assert.equal(verdict?.ok, true);
+    assert.equal(seen.url, 'https://redis.example.upstash.io/pipeline');
+    assert.equal(seen.auth, 'Bearer upstash-token');
+    assert.deepEqual(seen.cmds?.[0], ['INCR', 'kian:rl:m:1.2.3.4']);
+    // EXPIRE must be NX, otherwise every request slides the window forward.
+    assert.deepEqual(seen.cmds?.[1], ['EXPIRE', 'kian:rl:m:1.2.3.4', 60, 'NX']);
+    assert.deepEqual(seen.cmds?.[6], ['INCR', 'kian:rl:g']);
+  });
+
+  it('blocks on the minute window and reports the real TTL', async () => {
+    const lim = createSharedLimiter(cfg, limits, async () =>
+      new Response(JSON.stringify(redisReply(4, 37, 4, 86399, 4, 86399)), { status: 200 })
+    );
+    const verdict = await lim.check('1.2.3.4');
+    assert.equal(verdict?.ok, false);
+    assert.match(verdict?.reason ?? '', /per minute/);
+    assert.equal(verdict?.retryAfterSeconds, 37, 'should use the remaining TTL, not the whole window');
+  });
+
+  it('blocks on the global window across different visitors', async () => {
+    const lim = createSharedLimiter(cfg, limits, async () =>
+      new Response(JSON.stringify(redisReply(1, 59, 1, 86399, 101, 1200)), { status: 200 })
+    );
+    const verdict = await lim.check('someone-else');
+    assert.equal(verdict?.ok, false);
+    assert.match(verdict?.reason ?? '', /this service/);
+    assert.equal(verdict?.retryAfterSeconds, 1200);
+  });
+
+  it('returns null when Redis is unreachable so the caller can fall back', async () => {
+    const lim = createSharedLimiter(cfg, limits, async () => {
+      throw new Error('redis down');
+    });
+    assert.equal(await lim.check('1.2.3.4'), null);
+  });
+
+  it('survives a malformed reply without throwing', async () => {
+    const lim = createSharedLimiter(cfg, limits, async () => new Response('not json at all', { status: 500 }));
+    // A 500 with a non-JSON body must not crash the request.
+    const verdict = await lim.check('1.2.3.4').catch(() => 'threw');
+    assert.notEqual(verdict, 'threw');
   });
 });
