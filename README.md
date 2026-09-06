@@ -110,13 +110,29 @@ clipboard.
 
 | | Per message | Per file |
 |---|---|---|
-| **Images** | **10** | 4 MB |
+| **Images** | **10** | 1.5 MB *after* resizing |
 | **PDFs / documents** | **5** | 15 MB |
+| **All images combined** | **3 MB** | — |
 
 Those counts are not arbitrary: OpenRouter rejects a request outright above
 **20 images and documents combined** (`too many images and documents: 27 + 0 >
 20`), so 10 + 5 leaves headroom. Try to add more and the input box tells you
 how many were skipped instead of letting the provider 400 the whole request.
+
+**Images are resized in your browser before sending** — longest side 1024px,
+re-encoded as JPEG. This is not a quality compromise: the vision models resize
+to roughly that anyway, so the extra pixels only ever cost bandwidth. It is also
+what makes ten photos possible at all. A serverless proxy caps the request body
+hard (Vercel rejects anything over 4.5 MB with a 413, and no setting changes
+it), and base64 inflates the payload by another third — a single 4 MB phone
+photo encodes to 5.3 MB and would fail before reaching the model. If resizing
+still leaves a set over budget, the app says so and names the largest file
+rather than sending a request doomed to a bare 413.
+
+**Only some models see images.** Gemini Flash, Gemini Flash-Lite, Gemma 4 31B
+and Nemotron Nano VL accept them; the Groq models do not. Attach an image in
+Auto mode and Kian routes to a vision-capable model for you — but that means
+image messages draw on a smaller slice of the free quota than text does.
 
 Images also stay in the history sent with every follow-up, so a long
 conversation accumulates them. The request builder trims to the **10 most
@@ -203,7 +219,7 @@ npm run typecheck  # build typecheck + test-file typecheck
 
 ### Tests
 
-`npm test` runs 110 tests against the real service and proxy modules with a
+`npm test` runs 114 tests against the real service and proxy modules with a
 stubbed `fetch` and synthetic SSE streams. Coverage:
 
 - **`aiService.test.ts`** — model-id → provider/slug routing including migration

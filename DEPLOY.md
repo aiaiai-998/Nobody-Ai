@@ -63,6 +63,17 @@ slow way. Cooldowns escalate: a first 429 is treated as a per-minute rate limit
 and retried in 60 seconds, a third as an empty daily quota and skipped until
 midnight UTC.
 
+## Images through the proxy
+
+Vercel rejects any function request body over **4.5 MB** with a 413, and no
+configuration flag changes it. Kian resizes images in the browser (1024px,
+JPEG) so ten photos fit; the combined cap is 3 MB per message. If you deploy
+somewhere with a tighter limit, lower `MAX_TOTAL_IMAGE_BYTES` in
+`src/services/attachments.ts`.
+
+Note that only Gemini and two OpenRouter models accept images — the Groq models
+do not — so image messages draw on a smaller share of the free quota than text.
+
 ## A4. What happens at the end of the day
 
 When every provider is exhausted the visitor gets a plain-language message

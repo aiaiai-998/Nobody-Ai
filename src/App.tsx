@@ -8,6 +8,7 @@ import { DeployModal } from './components/DeployModal';
 import { SetupModal } from './components/SetupModal';
 import type { AIModel, Attachment, Message, ChatSession, AppSettings } from './types';
 import { DEFAULT_MODELS, SYSTEM_PERSONAS } from './config/constants';
+import { formatBytes, imageBudget } from './services/attachments';
 import { STORAGE_KEY_SESSIONS, STORAGE_KEY_SETTINGS, migrateLegacyKeys } from './config/storage';
 import {
   fetchOpenRouterFreeModels,
@@ -236,6 +237,22 @@ Your keys and chat history stay in this browser's local storage.`,
     const targetSession = activeSession;
     if (!targetSession) return;
     const sessionId = targetSession.id;
+
+    // A proxy caps the whole request body, so an over-budget set of images
+    // would fail with a bare 413. Say what is wrong instead.
+    const budget = imageBudget(attachments);
+    if (budget.over) {
+      const oversized = attachments
+        .filter((a) => a.kind === 'image')
+        .sort((a, b) => b.sizeBytes - a.sizeBytes)[0];
+      window.alert(
+        `Those images total ${formatBytes(budget.totalBytes)}, over the ${formatBytes(
+          budget.limitBytes
+        )} limit for one message.\n\nRemove the largest one ("${oversized?.name ?? 'image'}", ` +
+          `${formatBytes(oversized?.sizeBytes ?? 0)}) or send fewer at a time.`
+      );
+      return;
+    }
 
     // No key and not the offline demo: guide the user instead of failing.
     const wantsRealModel = !normalizeModelId(settings.activeModelId).startsWith('offline/');

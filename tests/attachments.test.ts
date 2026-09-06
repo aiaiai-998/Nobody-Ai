@@ -15,7 +15,11 @@ import {
   MAX_DOCUMENTS_PER_MESSAGE,
   MAX_IMAGES_PER_MESSAGE,
   MAX_IMAGE_BYTES,
+  MAX_TOTAL_IMAGE_BYTES,
+  dataUrlBytes,
+  downscaleImage,
   formatBytes,
+  imageBudget,
   isImageMime,
   isPdfMime,
   isPlainTextMime,
@@ -61,7 +65,9 @@ test('mime helpers classify attachments', () => {
 test('formatBytes is human readable', () => {
   assert.equal(formatBytes(512), '512 B');
   assert.equal(formatBytes(2048), '2.0 KB');
-  assert.equal(formatBytes(MAX_IMAGE_BYTES), '4.0 MB');
+  // A literal, not MAX_IMAGE_BYTES: this tests formatting, and tying it to the
+  // constant made the test fail whenever the limit was retuned.
+  assert.equal(formatBytes(4 * 1024 * 1024), '4.0 MB');
 });
 
 /* ---------- content building ---------- */
@@ -239,4 +245,55 @@ test('pruneOldImages never removes document attachments', () => {
     pruned[1].attachments?.map((a) => a.id),
     ['new']
   );
+});
+
+/* ---------- proxy body budget ---------- */
+
+test('imageBudget sums only images and flags an over-budget message', () => {
+  const under = [
+    { kind: 'image', sizeBytes: 400_000 },
+    { kind: 'image', sizeBytes: 400_000 },
+    // Documents are inlined as text, not base64, so they do not count here.
+    { kind: 'document', sizeBytes: 9_000_000 },
+  ];
+  const ok = imageBudget(under);
+  assert.equal(ok.totalBytes, 800_000);
+  assert.equal(ok.over, false);
+
+  const heavy = Array.from({ length: 10 }, () => ({ kind: 'image', sizeBytes: 400_000 }));
+  const bad = imageBudget(heavy);
+  assert.equal(bad.totalBytes, 4_000_000);
+  assert.equal(bad.over, true, '10 raw photos would blow a 4.5 MB function body');
+  assert.equal(bad.limitBytes, MAX_TOTAL_IMAGE_BYTES);
+});
+
+test('the per-image limit fits inside what a serverless body can carry', () => {
+  // Base64 inflates by ~4/3; Vercel rejects above 4.5 MB.
+  const encoded = MAX_IMAGE_BYTES * (4 / 3);
+  assert.ok(encoded < 4.5 * 1024 * 1024, `a single max image encodes to ${encoded} bytes`);
+  const totalEncoded = MAX_TOTAL_IMAGE_BYTES * (4 / 3);
+  assert.ok(totalEncoded < 4.5 * 1024 * 1024, `a full set encodes to ${totalEncoded} bytes`);
+});
+
+test('dataUrlBytes estimates the decoded size of a base64 payload', () => {
+  const bytes = new Uint8Array(3000).fill(7);
+  const b64 = Buffer.from(bytes).toString('base64');
+  const estimate = dataUrlBytes(`data:image/jpeg;base64,${b64}`);
+  assert.ok(Math.abs(estimate - 3000) <= 3, `estimated ${estimate}, expected ~3000`);
+  assert.equal(dataUrlBytes('data:,'), 0);
+});
+
+test('downscaleImage leaves the original alone when there is no canvas', async () => {
+  // Node has no document/canvas, so this exercises the fallback path: the
+  // browser does the resizing, and a failure must not lose the image.
+  const png = Uint8Array.from(
+    atob(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    ),
+    (c) => c.charCodeAt(0)
+  );
+  const file = new File([png], 'pixel.png', { type: 'image/png' });
+  const out = await downscaleImage(file);
+  assert.ok(out.dataUrl.startsWith('data:image/png;base64,'), 'original mime preserved');
+  assert.equal(out.bytes, file.size);
 });
